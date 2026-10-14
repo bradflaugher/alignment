@@ -57,12 +57,12 @@ def main(argv=None):
     g.run(4)
     mem = g.pb.memory
     w = g.u8('stage', STAGE_W)
-    deck = g.u8('stage', STAGE_W + 2201 - 2048) if False else None
     # palettes: the asset BG palettes, the deck's hull palette in PAL_WALL
-    bgpal = data['bgpal']
-    pals = []
-    for i in range(8):
-        pals.append([c555(G.rgb555(c)) for c in bgpal[i][1]] if i in bgpal else [(0, 0, 0)] * 4)
+    pals = [list(c) for _, c in data['bgpal']]
+    deck = g.u8('stage', STAGE_W + 201)
+    decks = data['deckpal']
+    if decks:
+        pals[1] = list(decks[deck % len(decks)][1])
     # tiles from VRAM (bank 0), LCDC bit 4 clear: i < 128 at 0x9000, else 0x8800
     cache = {}
 
@@ -86,9 +86,9 @@ def main(argv=None):
                         c = tp[7 - y if fy else y][7 - x if fx else x]
                         px[cx * 16 + half * 8 + x, ty * 8 + y] = pal[c]
     # sprites: the enemies where they start, drawn from sprite VRAM
-    spal = data['sprpal']
-    bot = [c555(G.rgb555(c)) for c in spal[2][1]] if 2 in spal else [(255, 0, 255)] * 4
-    names = dict((n, i) for i, n in enumerate(n for n, _ in data['spr']))
+    spal = [list(c) for _, c in data['sprpal']]
+    bot = spal[2]
+    names = dict((n, i) for i, (n, _) in enumerate(data['spr']) if n)
 
     def spr16(x0, y0, base, fx=False, fy=False, pal=bot):
         for q in range(4):
@@ -129,7 +129,7 @@ def main(argv=None):
         d.rectangle((ar[6] * 16, ar[7] * 16, ar[6] * 16 + 31, ar[7] * 16 + 31), outline=(255, 44, 168))
         d.text((ar[6] * 16 + 2, ar[7] * 16 + 10), 'BOSS', fill=(255, 44, 168))
     sx, sy = g.u8('stage', STAGE_W + 1), g.u8('stage', STAGE_W + 2)
-    spr16(sx * 16, sy * 16, names.get('SPR_MECH_IDLE', 0), pal=[c555(G.rgb555(c)) for c in spal[0][1]])
+    spr16(sx * 16, sy * 16, names.get('SPR_MECH_IDLE', 0), pal=spal[0])
     # a screen-sized grid, to judge distances
     for x in range(0, w * 16, 160):
         d.line((x, 0, x, 3), fill=(80, 80, 120))

@@ -28,7 +28,7 @@ def sectors():
 
 def load_demo(g, path):
     """Hand the bot's moves to the game's demo input (they run on its stage clock)."""
-    assert len(path) <= 1024, 'bot path too long for the demo buffer'
+    assert len(path) <= 1536, 'bot path too long for the demo buffer'
     g.poke('demo_buf', 0, [int(c) for c in path])
     g.poke('demo_len', 0, [len(path) & 0xFF, len(path) >> 8])
     g.poke('demo_on', 0, [1])

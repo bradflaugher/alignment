@@ -1003,7 +1003,7 @@ static uint8_t pause_menu(void)
 /* Demo input: moves (one per 4 frames of the stage clock, see tests/physbot.c) instead
  * of the joypad, so a replay never depends on frame timing. The ROM tests load the host
  * bot's moves here. The cannon is held down all the time, as the bot plays. */
-#define DEMO_MAX 1024
+#define DEMO_MAX 1536
 uint8_t demo_on;
 uint16_t demo_len;
 uint8_t demo_buf[DEMO_MAX];

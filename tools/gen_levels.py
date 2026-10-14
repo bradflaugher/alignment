@@ -232,6 +232,11 @@ def compile_level(path):
             raise LevelError('%s: the arena is too narrow (at least 8 columns inside)' % name)
         if any(ax0 < e[1] < ax1 or ax0 < e[2] < ax1 for e in enemies):
             raise LevelError('%s: no enemies inside the arena' % name)
+        # a mech lost in the fight comes back just outside the entry door, on the floor
+        if not (walkable(at(ax0 - 1, bot - 1)) and solid_floor(at(ax0 - 1, bot))):
+            raise LevelError('%s: the cell left of the entry door on the arena floor row (%d,%d) must be empty with floor under it (the respawn spot)' % (name, ax0 - 1, bot - 1))
+        if (bot - 1) not in [y for _, y in dl]:
+            raise LevelError('%s: the entry door must reach down to the arena floor' % name)
         m0 = sum(1 << y for _, y in dl)
         m1 = sum(1 << y for _, y in dd)
         arena = [BOSSES[parts[0]], level, ax0, ax1, top, bot, bx, by, m0, m1]
