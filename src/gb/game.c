@@ -244,7 +244,7 @@ static void ending(void)
     txt(0, 3, 14, "SCORE", PAL_DIM);
     txt_num(0, 10, 14, (uint16_t)(run.score / 100u > 65535u ? 65535u : run.score / 100u), 5, PAL_GREEN);
     txt(0, 15, 14, "00", PAL_GREEN);
-    txt(0, 3, 16, "ENDLESS IS OPEN", PAL_PURPLE);
+    txt(0, 1, 16, "ENDLESS IS OPEN", PAL_PURPLE);
     if (run.score > save.best_score) save.best_score = run.score;
     save.campaign_done = 1;
     save_write();
