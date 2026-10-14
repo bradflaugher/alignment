@@ -259,7 +259,11 @@ static uint16_t cam_target_x(void)
 
 static uint8_t cam_target_y(void)
 {
-    int16_t y = (int16_t)mech_py() - 60;
+    /* look where gravity can take the mech: on the ground, at the side a flip would
+     * fall to; in the air, where it is falling */
+    int16_t y;
+    if (mech.ground) y = (int16_t)mech_py() - (mech.g ? 40 : 80);
+    else y = (int16_t)mech_py() - (mech.g ? 76 : 44);
     if (y < 0) y = 0;
     if (y > SH * 16 - 136) y = SH * 16 - 136;
     return (uint8_t)y;

@@ -39,7 +39,7 @@ typedef struct {
 static uint64_t *seen;
 static Node *q;
 /* best-first: a queue of node indices per progress value, oldest first */
-#define NB 1024
+#define NB 2048
 static uint32_t *bnext;
 static uint32_t bhead[NB], btail[NB];
 static int bmax;
@@ -53,10 +53,8 @@ static int best_p;
 static int progress(const Node *n)
 {
     int cx = n->p.m.x >> 8;
-    if (S.arena.kind == BOSS_NONE) return cx;
-    if (n->b.dead) return 300 + cx;
-    if (n->b.active) return 140 + (n->b.hpmax - n->b.hp) * 4;
-    return cx;
+    if (S.arena.kind == BOSS_NONE || !n->b.dead) return cx;
+    return 200 + cx;
 }
 
 static void bpush(uint32_t i)
@@ -64,12 +62,7 @@ static void bpush(uint32_t i)
     int b = progress(&q[i]);
     bnext[i] = 0xFFFFFFFFu;
     if (b > best_p) { best_p = b; best_i = i; }
-    if (q[i].b.active) {
-        /* in a fight, newest first: dig into one line of play */
-        bnext[i] = bhead[b];
-        bhead[b] = i;
-        if (bnext[i] == 0xFFFFFFFFu) btail[b] = i;
-    } else if (bhead[b] == 0xFFFFFFFFu) {
+    if (bhead[b] == 0xFFFFFFFFu) {
         bhead[b] = i;
         btail[b] = i;
     } else {
@@ -158,11 +151,92 @@ static void load_state(const Node *n)
     if (n->b.dead) arena_open(&S);
 }
 
+/* one move (HOLD frames of action a) from node n; returns the events */
+static uint16_t step(Node *n, int a, uint8_t jheld)
+{
+    uint16_t ev = 0;
+    int f, i;
+    load_state(n);
+    for (f = 0; f < HOLD; f++) {
+        uint8_t press = f == 0 ? physbot_acts[a][1] : 0;
+        /* a jump only starts on a fresh press, as on the Game Boy */
+        if ((press & IN_JUMP_NEW) && jheld) press &= (uint8_t)~IN_JUMP_NEW;
+        ev = world_step(&n->p, &S, &n->b, (uint8_t)(physbot_acts[a][0] | press | IN_FIRE), ++n->t);
+        if (ev & (EV_DEAD | EV_EXIT)) break;
+    }
+    for (i = 0; i < S.nenemies; i++) n->hp[i] = S.enemy[i].hp;
+    for (i = 0; i < nitems; i++)
+        if (S.cell[item_at[i]] == T_EMPTY) n->items |= (uint16_t)(1u << i);
+    n->jheld = (uint8_t)((physbot_acts[a][0] & IN_JUMP) != 0);
+    return ev;
+}
+
+/* A boss fight is searched a move at a time (a beam): every state of this move is
+ * expanded, and only the BEAM with the least boss armour left go on. A path found
+ * this way never dawdles, and the search can't drown in the fight's states. Returns
+ * the node where the boss is down, or none. */
+#define BEAM 1200
+#define FIGHT_MOVES 700
+static Node beam_n[BEAM * 9];
+static uint64_t beam_k[BEAM * 9];
+static uint32_t beam_ix[BEAM * 9];
+
+static int beam_cmp(const void *a, const void *b)
+{
+    const Node *x = &beam_n[*(const uint32_t *)a], *y = &beam_n[*(const uint32_t *)b];
+    uint64_t kx = beam_k[*(const uint32_t *)a], ky = beam_k[*(const uint32_t *)b];
+    if (x->b.hp != y->b.hp) return x->b.hp < y->b.hp ? -1 : 1;
+    return kx < ky ? -1 : kx > ky ? 1 : 0;
+}
+
+static uint32_t qt_g;
+
+static uint32_t fight(uint32_t start)
+{
+    static uint32_t cur[BEAM];
+    int ncur = 1, move, c, a;
+    uint32_t nt, i;
+    cur[0] = start;
+    for (move = 0; move < FIGHT_MOVES && ncur; move++) {
+        nt = 0;
+        for (c = 0; c < ncur; c++) {
+            for (a = 0; a < 9; a++) {
+                Node *n = &beam_n[nt];
+                uint16_t ev;
+                *n = q[cur[c]];
+                ev = step(n, a, q[cur[c]].jheld);
+                if (ev & EV_DEAD) continue;
+                n->parent = cur[c];
+                n->act = (uint8_t)a;
+                if (n->b.dead) {
+                    if (getenv("PBDBG")) fprintf(stderr, "boss down at move %d, mech x %u y %u\n", move, n->p.m.x >> 4, n->p.m.y >> 4);
+                    if (qt_g >= MAXQ) return 0xFFFFFFFFu;
+                    q[qt_g] = *n;
+                    return qt_g++;
+                }
+                beam_k[nt] = key_node(n);
+                if (!insert(beam_k[nt])) continue;
+                beam_ix[nt] = nt;
+                nt++;
+            }
+        }
+        qsort(beam_ix, nt, sizeof(uint32_t), beam_cmp);
+        if (getenv("PBDBG") && (move % 25 == 0 || nt < 50))
+            fprintf(stderr, "fight move %d: %u states, best hp %u\n", move, nt, nt ? beam_n[beam_ix[0]].b.hp : 0);
+        if (nt > BEAM) nt = BEAM;
+        for (i = 0, ncur = 0; i < nt && qt_g < MAXQ; i++) {
+            q[qt_g] = beam_n[beam_ix[i]];
+            cur[ncur++] = qt_g++;
+        }
+    }
+    return 0xFFFFFFFFu;
+}
+
 int physbot_solve(const Stage *src, unsigned *states, char *path, int pathmax)
 {
     uint32_t qh, qt = 0, i;
     uint16_t c;
-    int a, f, win = -1;
+    int a, f, win = -1, fights = 0;
     if (!seen) {
         seen = calloc(HASH_N, sizeof(uint64_t));
         q = malloc(MAXQ * sizeof(Node));
@@ -203,20 +277,9 @@ int physbot_solve(const Stage *src, unsigned *states, char *path, int pathmax)
     while (win < 0 && (qh = bpop()) != 0xFFFFFFFFu) {
         for (a = 0; a < 9 && win < 0; a++) {
             Node n;
-            uint16_t ev = 0;
+            uint16_t ev;
             n = q[qh];
-            load_state(&n);
-            for (f = 0; f < HOLD; f++) {
-                uint8_t press = f == 0 ? physbot_acts[a][1] : 0;
-                /* a jump only starts on a fresh press, as on the Game Boy */
-                if ((press & IN_JUMP_NEW) && q[qh].jheld) press &= (uint8_t)~IN_JUMP_NEW;
-                ev = world_step(&n.p, &S, &n.b, (uint8_t)(physbot_acts[a][0] | press | IN_FIRE), ++n.t);
-                if (ev & (EV_DEAD | EV_EXIT)) break;
-            }
-            for (i = 0; i < S.nenemies; i++) n.hp[i] = S.enemy[i].hp;
-            for (i = 0; i < nitems; i++)
-                if (S.cell[item_at[i]] == T_EMPTY) n.items |= (uint16_t)(1u << i);
-            n.jheld = (uint8_t)((physbot_acts[a][0] & IN_JUMP) != 0);
+            ev = step(&n, a, q[qh].jheld);
             if (ev & EV_DEAD) continue;
             n.parent = qh;
             n.act = (uint8_t)a;
@@ -228,6 +291,20 @@ int physbot_solve(const Stage *src, unsigned *states, char *path, int pathmax)
             if (!insert(key_node(&n))) continue;
             if (qt >= MAXQ) break;
             q[qt] = n;
+            if (n.b.active && fights < 6) {
+                /* the fight starts: settle it with the beam, carry on from the win */
+                uint32_t w;
+                fights++;
+                qt_g = qt + 1;
+                w = fight(qt);
+                qt = qt_g;
+                if (w != 0xFFFFFFFFu) {
+                    bpush(w);
+                    break;      /* (carry on from the win first) */
+                }
+                continue;
+            }
+            if (n.b.active) continue;
             bpush(qt);
             qt++;
         }
