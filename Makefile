@@ -14,8 +14,9 @@ GB_ASM    := $(wildcard src/gb/*.s)
 GB_HDR    := $(wildcard src/gb/*.h)
 HOST_CFLAGS := -std=c99 -O2 -Wall -Wextra -Werror
 
-# MBC5 + RAM + battery (0x1B), 4 x 8 KB SRAM banks (bank 0 = save, bank 1 = the
-# solver's work area), CGB-enhanced, ROM banks packed automatically
+# MBC5 + RAM + battery (0x1B), 4 x 8 KB SRAM banks (bank 0 = save, bank 1 = the stage
+# checker's work area, banks 2-3 = the stage's prebuilt tile map), CGB-enhanced, ROM
+# banks packed automatically
 CFLAGS_GB  := -Isrc/core -Isrc/gb
 # the hot core gets the slow, thorough register allocator
 CFLAGS_CORE := $(CFLAGS_GB) -Wf--max-allocs-per-node50000 -Wf--opt-code-speed
@@ -66,30 +67,31 @@ $(BUILD):
 $(OBJ):
 	mkdir -p $(OBJ)
 
-# ---- host builds of the core
-$(BUILD)/test_core: tests/test_core.c tests/ref_room.c tests/ref_room.h $(CORE_SRC) $(CORE_HDR) | $(BUILD)
-	$(CC) $(HOST_CFLAGS) -Isrc/core -Itests -o $@ tests/test_core.c tests/ref_room.c $(CORE_SRC)
-
-$(BUILD)/algen: tools/algen.c $(CORE_SRC) $(CORE_HDR) | $(BUILD)
-	$(CC) $(HOST_CFLAGS) -Isrc/core -o $@ tools/algen.c $(CORE_SRC)
+# ---- host builds of the core: the stage generator, the physics and the physics bot
+HOST_CORE := src/core/stage.c src/core/phys.c src/core/rng.c
+$(BUILD)/msgen: tools/msgen.c tests/physbot.c tests/physbot.h $(HOST_CORE) $(CORE_HDR) | $(BUILD)
+	$(CC) $(HOST_CFLAGS) -Isrc/core -Itests -o $@ tools/msgen.c tests/physbot.c $(HOST_CORE)
 
 $(BUILD)/test_sound: tests/test_sound.c src/gb/sound.c src/gb/music_data.c $(GB_HDR) | $(BUILD)
 	$(CC) $(HOST_CFLAGS) -DHOST_TEST -Isrc/gb -o $@ tests/test_sound.c src/gb/sound.c src/gb/music_data.c
 
-test-host: $(BUILD)/test_core $(BUILD)/test_sound $(BUILD)/algen
-	$(BUILD)/test_core
+# every stage passes the reachability check, and the physics bot finishes it with real
+# button presses (drones, crushers and laser gates included)
+test-host: $(BUILD)/msgen $(BUILD)/test_sound
+	$(BUILD)/msgen stats 30 60
+	$(BUILD)/msgen bot 8 40
 	$(BUILD)/test_sound
 
 test-assets:
 	$(PYTHON) -m unittest discover -s tests -p 'test_assets.py'
 
-test-rom: $(ROM) $(BUILD)/algen
+test-rom: $(ROM) $(BUILD)/msgen
 	$(PYTHON) -m unittest discover -s tests -p 'test_rom.py' -v
 
-stats: $(BUILD)/algen
-	$(BUILD)/algen stats 10 100
+stats: $(BUILD)/msgen
+	$(BUILD)/msgen stats 10 100
 
-screenshots: $(ROM)
+screenshots: $(ROM) $(BUILD)/msgen
 	$(PYTHON) tools/screenshots.py
 
 test: test-host test-assets test-rom

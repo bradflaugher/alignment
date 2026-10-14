@@ -42,7 +42,7 @@ jobs:
       - name: Install PyBoy (headless Game Boy emulator for ROM tests)
         run: pip install pyboy pillow numpy
 
-      - name: Host unit tests (rules, solver, generator, sound engine)
+      - name: Host tests (stage generator, physics bot, sound engine)
         run: make test-host
 
       - name: Asset pipeline tests
@@ -56,11 +56,11 @@ jobs:
           date -u +%Y.%m.%d > build/build-date.txt
           make rom
 
-      - name: Emulator tests (DMG + CGB: same rooms as the host, solutions clear them)
+      - name: Emulator tests (DMG + CGB: the bot's button presses clear the same stages, no dropped frames)
         run: make test-rom
 
-      - name: Generator statistics
-        run: build/algen stats 10 60
+      - name: Screenshots
+        run: make screenshots
 
       - name: Upload ROM and screenshots
         uses: actions/upload-artifact@v4
@@ -71,6 +71,7 @@ jobs:
             build/alignment.sym
             build/build-date.txt
             build/screens/*.png
+            docs/screens/*
 
   release:
     name: Release (date-stamped, latest only)

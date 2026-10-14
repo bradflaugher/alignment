@@ -1,15 +1,15 @@
-# Playing Infinite Best on real hardware (EverDrive)
+# Playing Alignment on real hardware (EverDrive)
 
 This guide is for an **EverDrive GB X-series** cart (X3 / X5 / X7) in any Game Boy,
 Game Boy Color, or GBC-compatible handheld such as the **ModRetro Chromatic**.
 
-The ROM is a standard **MBC5 + RAM + battery** cartridge image (64 KB ROM, 8 KB save RAM).
+The ROM is a standard **MBC5 + RAM + battery** cartridge image (64 KB ROM, 32 KB save RAM).
 It works on original grey Game Boys and runs in full colour and double speed on Color hardware.
 
 ## 1. Get the ROM
 
 1. Open the repository's **Releases** page. There is only ever one release; its tag is the build date (e.g. `2026.09.27`).
-2. Download `infinite-best-YYYY.MM.DD.gb`.
+2. Download `alignment-YYYY.MM.DD.gb`.
 
    (You can ignore the `.sym` file. It holds debug symbols for emulators.)
 
@@ -23,7 +23,7 @@ It works on original grey Game Boys and runs in full colour and double speed on 
 ## 3. Copy the game
 
 1. Make a folder for games if you like, e.g. `GB/`.
-2. Copy `infinite-best-YYYY.MM.DD.gb` into it. Renaming it `Infinite Best.gb` is fine.
+2. Copy `alignment-YYYY.MM.DD.gb` into it. Renaming it `Alignment.gb` is fine.
 3. Safely eject the card.
 
 ```
@@ -31,19 +31,19 @@ SD card
 ├── GBCSYS/           <- EverDrive OS (don't touch)
 │   └── GBCOS.BIN
 └── GB/
-    └── Infinite Best.gb
+    └── Alignment.gb
 ```
 
 ## 4. Play
 
 1. Put the microSD card into the EverDrive, and the EverDrive into the handheld (label facing out on a Chromatic, same as any cartridge).
 2. Power on. The EverDrive menu appears.
-3. Go to the folder, highlight **Infinite Best**, and press **A**. The game boots straight to the title screen.
+3. Go to the folder, highlight **Alignment**, and press **A**. The game boots straight to the title screen.
 4. Pick **RUN** (roguelike mode, energy on the line) or **ZEN** (endless and relaxed; your sector is saved).
 
 ## 5. Saves
 
-The game keeps its records and your Zen progress in battery-backed save RAM. The EverDrive copies that RAM to `GBCSYS/SAVE/` as a `.srm` file whose name matches the ROM (`Infinite Best.srm`). Cart save states, from the in-game menu, go in `GBCSYS/SNAP/` and are not the game's own progress.
+The game keeps its records and your Zen progress in battery-backed save RAM. The EverDrive copies that RAM to `GBCSYS/SAVE/` as a `.srm` file whose name matches the ROM (`Alignment.srm`). Cart save states, from the in-game menu, go in `GBCSYS/SNAP/` and are not the game's own progress.
 
 - Progress is written the moment you clear a sector, so you can just switch off the handheld.
 - EverDrive models differ in *when* they copy save RAM to the SD card:
@@ -51,7 +51,7 @@ The game keeps its records and your Zen progress in battery-backed save RAM. The
   - Some write it on the next power-on, before the menu appears.
 
   If a record ever seems to vanish, do this: after playing, power-cycle the handheld once and let the EverDrive menu load before removing the SD card. For details, see your cart's manual on krikzz.com.
-- To wipe your progress, delete `GBCSYS/SAVE/Infinite Best.srm` from the card.
+- To wipe your progress, delete `GBCSYS/SAVE/Alignment.srm` from the card.
 
 ## Updating
 

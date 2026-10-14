@@ -5,13 +5,18 @@ Change a contract here first, then on both sides.
 
 ## 1. The world (core)
 
-* A **room** is 10 x 9 cells of 16x16 px: the whole 160x144 screen. Cell index = `y*10 + x`
-  (0..89). Row 0 and row 8, column 0 and column 9 are the **border**: always wall, except
-  the room's two **openings** (entry and exit). Corner cells are always wall.
+* A **stage** is one long corridor of 16x16 px cells, 16 cells tall (the full 256 px BG map
+  height) and 96 to 128 cells wide (about 10 to 13 screens). Cell index is column-major:
+  `SCELL(x, y) = x*16 + y`, so a column is 16 consecutive bytes.
 * Gravity is **down** or **up** (Metal Storm). Down = purple polarity, up = green polarity.
-* Rooms are chained: room n's exit side decides room n+1's entry side (right exit -> left
-  entry, same row; up exit -> bottom entry, same column, gravity up; down exit -> top entry,
-  same column, gravity down). Exits are never on the left, so the route never crosses itself.
+  Phase blocks of the gravity's colour are solid, the other colour is a ghost.
+* Stage *n* of seed *s* is always the same stage (`stage_gen(&S, s, n)`), on the host and on
+  the Game Boy. The core physics (`mech_step`) is shared too, so the host's physics bot
+  (`tests/physbot.c`) proves every stage can be finished with real button presses and the
+  ROM tests replay those presses on the cartridge.
+* Enemies run left to right in `Stage.enemy[]` (the game only scans the ones on screen) and
+  move on the stage clock: everything that moves repeats every 512 frames.
+* Positions are in 1/16 px; the mech's hitbox is `HB_W x HB_H` inside its 16x16 sprite.
 
 ## 2. BG tile memory (LCDC bit 4 = 0: BG/window tiles at 0x8800-0x97FF, signed)
 
@@ -22,7 +27,7 @@ background-only:
 | --- | --- | --- |
 | 0..63 | 64 | font, ASCII 32..95 (0 = space = blank, all colour 0) |
 | 64..79 | 16 | UI tiles |
-| 80..255 | 176 | room art (walls, metatiles, animation slots); the title logo is loaded over this region on the title screen |
+| 80..255 | 176 | stage art (walls, metatiles, animation slots); the title logo is loaded over this region on the title screen |
 
 Tile index *i* lives at `0x9000 + i*16` for i < 128 and at `0x8800 + (i-128)*16` for i >= 128.
 
@@ -42,7 +47,7 @@ enum { UI_BOLT, UI_STEP, UI_STAR, UI_CELL, UI_FLAG, UI_BOX_TL, UI_BOX_T, UI_BOX_
        UI_BOX_R, UI_BOX_BL, UI_BOX_B, UI_BOX_BR, UI_BAR_FULL, UI_BAR_HALF, UI_GRAV_DOWN,
        UI_GRAV_UP, ... };   /* values are TILE_UI_BASE + n; box edges may alias */
 
-/* room art: one block of tile data loaded at TILE_ART_BASE */
+/* stage art: one block of tile data loaded at TILE_ART_BASE */
 #define NUM_ART_TILES n          /* <= 176 */
 extern const uint8_t art_tiles[NUM_ART_TILES*16];
 

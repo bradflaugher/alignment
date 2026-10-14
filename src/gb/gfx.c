@@ -17,6 +17,7 @@ uint8_t is_cgb;
 volatile uint8_t frame;
 uint8_t joy, joy_prev, joy_new;
 uint8_t scroll_x, scroll_y;
+#define SCY_MAX (256 - HUD_WY)    /* the lowest camera: the HUD covers the rest */
 int8_t shake_x, shake_y;
 
 /* RAM copies of banked tables (render.c reads them) */
@@ -159,7 +160,13 @@ static void vbl_isr(void)
     }
     frame++;
     SCX_REG = (uint8_t)(scroll_x + shake_x);
-    SCY_REG = (uint8_t)(scroll_y + shake_y);
+    {
+        /* a shake never shows past the stage's top or bottom (the map would wrap) */
+        uint8_t y = (uint8_t)(scroll_y + shake_y);
+        if (shake_y < 0 && y > scroll_y) y = 0;
+        else if (shake_y > 0 && y > SCY_MAX && scroll_y <= SCY_MAX) y = SCY_MAX;
+        SCY_REG = y;
+    }
     if (pal_dirty && is_cgb) {
         /* (both palettes are written here, in VBlank, so nobody waits for one) */
         set_bkg_palette(0, 8, out_pal);
