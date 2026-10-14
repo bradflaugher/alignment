@@ -35,18 +35,6 @@ static uint8_t my;
 
 #define ALONG(v) (gd > 0 ? (int16_t)(v) : (int16_t)-(v))
 
-static uint8_t overlap(uint16_t ax, uint8_t ay, uint8_t aw, uint8_t ah,
-                       uint16_t bx, uint8_t by, uint8_t bw, uint8_t bh)
-{
-    return (uint8_t)(ax < (uint16_t)(bx + bw) && bx < (uint16_t)(ax + aw) &&
-                     ay < (uint16_t)(by + bh) && by < (uint16_t)(ay + ah));
-}
-
-static uint8_t hits_mech(uint16_t bx, uint8_t by, uint8_t bw, uint8_t bh)
-{
-    return overlap(mx, my, MW, MH, bx, by, bw, bh);
-}
-
 void player_spawn(Player *p, uint8_t cx, uint8_t cy) CORE_BANKED
 {
     uint8_t i;
@@ -178,14 +166,16 @@ static void arena_box(void)
     aB = (uint8_t)(a->bot << 4);
 }
 
-/* the boss's hurt box */
-static void boss_box(uint16_t *x, uint8_t *y, uint8_t *w, uint8_t *h)
+/* the boss's hurt box, into bbx / bby / bbw / bbh */
+static uint16_t bbx;
+static uint8_t bby, bbw, bbh;
+static void boss_box(void)
 {
     switch (B->kind) {
-    case BK_TWIN: *x = B->x + 3; *y = (uint8_t)(B->y + 1); *w = 10; *h = 14; break;
-    case BK_HIVE: *x = B->x + 4; *y = (uint8_t)(B->y + 4); *w = 24; *h = 24; break;
-    case BK_PISTON: *x = B->x + 2; *y = B->y; *w = 28; *h = 32; break;
-    default: *x = B->x + 2; *y = (uint8_t)(B->y + 4); *w = 28; *h = 24; break;
+    case BK_TWIN: bbx = B->x + 3; bby = (uint8_t)(B->y + 1); bbw = 10; bbh = 14; break;
+    case BK_HIVE: bbx = B->x + 4; bby = (uint8_t)(B->y + 4); bbw = 24; bbh = 24; break;
+    case BK_PISTON: bbx = B->x + 2; bby = B->y; bbw = 28; bbh = 32; break;
+    default: bbx = B->x + 2; bby = (uint8_t)(B->y + 4); bbw = 28; bbh = 24; break;
     }
 }
 
@@ -486,8 +476,13 @@ static uint16_t boss_frame(void)
         }
     }
     /* touching it */
-    boss_box(&bx, &by, &bw, &bh);
-    if (!P->m.dead && hits_mech(bx, by, bw, bh)) {
+    boss_box();
+    bx = bbx;
+    by = bby;
+    bw = bbw;
+    bh = bbh;
+    if (!P->m.dead && mx < (uint16_t)(bx + bw) && bx < (uint16_t)(mx + MW) && my < (uint8_t)(by + bh) &&
+        by < (uint8_t)(my + MH)) {
         if (B->kind == BK_PISTON && B->state == 1) {
             P->m.dead = DIE_CRUSHER;
         } else if ((B->kind == BK_SENTINEL || B->kind == BK_TWIN) && ALONG(P->m.vy) >= 16 &&
@@ -559,9 +554,6 @@ static uint16_t damage_enemy(const Near *q, uint8_t dmg)
 #define HITS_NEAR(q, x, y, w, h) ((x) < (uint16_t)((q)->bx + (q)->bw) && (q)->bx < (uint16_t)((x) + (w)) && \
                                   (y) < (uint8_t)((q)->by + (q)->bh) && (q)->by < (uint8_t)((y) + (h)))
 
-/* the boss's box this frame (worked out once) */
-static uint16_t bbx;
-static uint8_t bby, bbw, bbh;
 
 static uint16_t shots(void)
 {
@@ -569,7 +561,7 @@ static uint16_t shots(void)
     uint8_t i, j, t, cy, sy;
     Shot *s = P->shot;
     const Near *q;
-    if (B->active) boss_box(&bbx, &bby, &bbw, &bbh);
+    if (B->active) boss_box();
     for (i = 0; i < NSHOT; i++, s++) {
         if (!s->life) continue;
         s->life--;
