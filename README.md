@@ -1,116 +1,109 @@
 <h1 align="center">ALIGNMENT</h1>
 
 <p align="center">
-  <b>An endless gravity-flipping action puzzler for the Game Boy and Game Boy Color.</b><br>
-  <i>Sister cartridge to Infinite Best, Open World and Speedy Purple Peter. No guns. Just gravity.</i>
+  <b>A gravity-flipping mech action game for the Game Boy and Game Boy Color.</b><br>
+  <i>Sister cartridge to Infinite Best, Open World and Speedy Purple Peter. In the spirit of Metal Storm.</i>
 </p>
 
 <p align="center">
-  <img src="docs/screens/gameplay.gif" width="480" alt="Gameplay: a mech flipping gravity through a scrolling station">
+  <img src="docs/screens/gameplay.gif" width="480" alt="Gameplay: the mech fights through the hangar bay">
 </p>
 
 <p align="center">
   <img src="docs/screens/cgb_title.png" width="240" alt="Title screen">
-  <img src="docs/screens/cgb_stage9_1.png" width="240" alt="Stage 9: plasma vents and drones">
-  <img src="docs/screens/cgb_stage25_2.png" width="240" alt="Stage 25: deep in the station">
+  <img src="docs/screens/cgb_sector2_2.png" width="240" alt="Sector 2: Reactor Core">
+  <img src="docs/screens/cgb_sector1_boss.png" width="240" alt="The Sentinel">
 </p>
 
 ---
 
-You pilot a small mech through an orbital station whose gravity you control. **Press A and
-up becomes down.** There is no weapon on board: every drone, crusher and laser gate is a
-timing and gravity problem, and the station itself is the puzzle.
+The station has lost its alignment and its machines have turned on it. You pilot a small
+armoured mech with an arm cannon and one trick: **press Up+A and gravity turns over.**
+Floors become ceilings, a plasma lake becomes something you walk over upside down, and a
+drone hanging from the ceiling becomes something you can land on.
 
-Every stage is a long scrolling corridor of 10 to 13 screens, in the spirit of **Metal Storm**
-(Irem, 1991): ceilings become floors, shafts open up and down, phase blocks are solid in only
-one gravity, and the exit gate waits at the far end. A checkpoint sits halfway. The stages
-never run out: they are generated from a seed, so stage 40 of seed `1234` is the same stage
-on every cartridge.
+Eight hand-made sectors, each a maze of rooms about two screens tall and twelve wide,
+each with its own idea and a boss at the end. Clear the campaign and **ENDLESS** opens:
+a station generated forever from a seed, with a boss every fourth stage.
 
 ## Controls
 
 | Button | |
 | --- | --- |
-| **A** | flip gravity (any time on the ground, once in the air until you land) |
-| **B** | jump (hold for height) |
 | **D-pad** | run |
-| **START** | pause, see the seed, quit the run |
+| **A** | jump (hold for height) |
+| **B** | fire the arm cannon (hold to repeat) |
+| **Up+A** (or **SELECT**) | flip gravity: any time on the ground, once in the air |
+| **START** | pause |
 
-## What's in a station
+Falling onto an enemy along gravity crushes it, with a bounce and your air flip back.
 
-New hazards arrive one at a time, each with a stage built around it (the stage card names it):
+## The station
 
-| Stage | Hazard |
-| --- | --- |
-| 1 | plasma pits in floors and ceilings |
-| 2 | gravity shafts |
-| 3 | staggered pits: floor, ceiling, floor |
-| 4 | crawler drones (on floors and ceilings) |
-| 5 | phase blocks: purple is solid in down gravity, green in up gravity |
-| 6 | hover drones |
-| 7 | laser gates on a timer |
-| 8 | crushers |
+| | Sector | Idea | Boss |
+| --- | --- | --- | --- |
+| 1 | Hangar Bay | running, shooting, the first flips, stomps | Sentinel, a walker that flips its own gravity |
+| 2 | Reactor Core | phase blocks: purple is solid in one gravity, green in the other | Piston, a hammer whose core opens only after it slams |
+| 3 | Foundry | crushers and laser gates in rhythm | The Hive, a floating core spraying spores |
+| 4 | Cryo Vault | towers, hover drones, swapping floor and ceiling | Mirror Mech, which copies your flips |
+| 5 | Sensor Array | turret gauntlets, cover to cover | Sentinel, faster |
+| 6 | The Spine | climbs, falls and mid-air flip chains | Piston, faster |
+| 7 | Gravity Vault | phase-block puzzles | The Hive, angrier |
+| 8 | Station Core | everything at once | Mirror Mech, the final fight |
 
-After that they mix, and the stages grow longer and faster. Energy cells are scattered along
-the way: take every one in a stage for a perfect bonus, and every 25 cells is an extra mech.
+Power-ups hide in alcoves you reach with a clever flip: **P** power shot, **S** shield,
+**B** gravity bomb (your next flip wrecks everything near), **+** hull repair. The hull
+takes three hits; plasma, lasers and crushers take everything. Energy cells are score
+(25 of them is an extra mech), and every sector has a checkpoint halfway.
 
-- **NEW RUN**: three mechs, a fresh seed, score and best stage saved.
-- **ZEN WALK**: no lives, no score, it remembers where you got to.
-- **ENTER SEED**: type a 4-digit hex seed and play the same station as a friend.
+## Built for every Game Boy
 
-## Built to run everywhere
-
-It runs at a locked 60 fps on an original 1989 Game Boy, and in colour on the Game Boy Color,
-ModRetro Chromatic, Analogue Pocket and GBA. The palette is a high-contrast black, electric
-purple and green on Color hardware, with a crisp four-shade version on DMG.
+High-contrast black, electric purple and green on Color hardware (Game Boy Color,
+Analogue Pocket, ModRetro Chromatic, GBA), with a crisp four-shade version for the
+original Game Boy. On Color hardware it runs at a steady 60 fps. An original Game Boy
+has half the speed and slows down briefly in the busiest fights, as the 8-bit classics
+did.
 
 <p align="center">
-  <img src="docs/screens/dmg_stage9_1.png" width="240" alt="The same stage on an original Game Boy">
-  <img src="docs/screens/dmg_stage25_1.png" width="240" alt="Stage 25 on DMG">
+  <img src="docs/screens/map_sector2.png" width="720" alt="The whole of sector 2, from the game's own tile map">
 </p>
+<p align="center"><sub>Sector 2, Reactor Core, as one picture (made by <code>tools/level_map.py</code> from the game itself)</sub></p>
 
-How it stays fast on a 1 MHz CPU:
+## Every sector is proven beatable
 
-- Each stage's whole tile map is built once into cartridge RAM when the stage loads; while you
-  play, the VBlank interrupt copies two tile columns straight from there into video RAM.
-- Particles are updated by a hand-written SM83 routine, enemy motion uses an 8x8 assembly
-  multiply, and nothing in a frame divides.
-- The HUD is one window row kept in RAM and copied during VBlank, CGB palettes too, so the
-  game never waits for the screen.
-- The ROM tests replay real button presses and fail if the game drops a single frame.
-
-## Every stage is proven finishable
-
-`tests/physbot.c` is a search over the mech's real physics (the same C code the cartridge runs)
-with real button presses (run, jump, flip), including the moving drones, crushers and laser
-gates on the stage clock. CI generates hundreds of stages and the bot must finish every one.
-Then the ROM tests boot the cartridge in an emulator on DMG and CGB, feed it the bot's button
-presses frame by frame, and require the stage to be cleared with no death and no dropped frame.
+`tests/physbot.c` plays the real game code (the same C the cartridge runs) with real
+button presses and the cannon held down, and must finish every sector and boss **without
+taking a single hit**. Boss fights are searched a move at a time with a beam of 1200
+states, so the bot fights like a player, not a lawnmower. Then the ROM tests boot the
+cartridge in an emulator, DMG and Color, feed it the bot's presses frame by frame, and
+require the same result.
 
 ```
-make            # build/alignment.gb (needs GBDK-2020 4.3 in /opt/gbdk)
-make test       # host tests (generator, physics bot, sound), asset tests, ROM tests (PyBoy)
-make stats      # generator statistics
-build/msgen show 0x1234 9      # print a stage
-build/msgen path 0x1234 9      # the bot's button presses for it
-make screenshots
+make                 # build/alignment.gb (GBDK-2020 4.3 in /opt/gbdk)
+make test            # host tests (levels, bot, generator, sound), asset tests, ROM tests (PyBoy)
+make maps            # build/maps/sectorN.png: every sector as one picture
+build/msgen show s 3                        # a sector as text
+build/msgen replay s 3 $(build/msgen path s 3)   # watch the bot's run, move by move
 ```
+
+Making levels: see [docs/LEVEL_DESIGN.md](docs/LEVEL_DESIGN.md). A sector is a text map
+in `assets/levels/`.
 
 ## Play it
 
 - **Emulator:** any Game Boy emulator (SameBoy, Gambatte, mGBA, Emulicious...).
-- **Real hardware:** grab the ROM from the latest release and follow
-  [docs/EVERDRIVE.md](docs/EVERDRIVE.md).
+- **Real hardware:** the ROM is on the latest release; see [docs/EVERDRIVE.md](docs/EVERDRIVE.md).
 
-The game saves your best stage, best score and Zen progress in battery-backed RAM.
+The game saves your progress through the campaign, the best score and the best endless
+stage in battery-backed RAM.
 
 ## Layout
 
 | Path | |
 | --- | --- |
-| `src/core/` | portable C: stage generator and checker, physics, run rules, RNG |
+| `src/core/` | portable C: physics, combat and bosses (`world.c`), sector loader, generator, run rules |
 | `src/gb/` | Game Boy front end: play loop, rendering, effects, menus, sound driver, save |
-| `assets/` | pixel art and music sources (`tools/gen_assets.py`, `tools/gen_music.py`) |
-| `tests/` | physics bot, ROM tests (PyBoy), asset and sound tests |
-| `tools/` | `msgen` (stage tool), asset/music generators, screenshot tool, bank-0 check |
-| `docs/CONTRACTS.md` | the layouts the code, art and music agree on |
+| `assets/` | pixel art, music sources and the sector maps (`assets/levels/`) |
+| `tests/` | the physics bot, ROM tests (PyBoy), asset and sound tests |
+| `tools/` | `msgen`, level compiler, level viewer, asset and music generators, screenshots |
+| `docs/` | contracts between code and assets, level design guide, EverDrive guide |
