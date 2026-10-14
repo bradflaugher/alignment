@@ -25,6 +25,11 @@ void gfx_init(void);
 void gfx_load_play_tiles(void);
 void gfx_load_title_tiles(void);
 void gfx_load_boss(uint8_t art);
+/* a 16x16 sprite at OAM slot `slot` (see gfx.c) */
+extern uint8_t spr_x, spr_y, spr_t, spr_p;
+void spr16a(uint8_t slot);
+extern uint16_t spr_vis;
+void spr32a(uint8_t slot);
 void gfx_hide_sprites(void);
 void gfx_draw_logo(uint8_t y0);
 void input_poll(void);

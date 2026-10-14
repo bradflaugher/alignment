@@ -13,7 +13,7 @@
 #define FIRE_CD 9           /* frames between shots (power shot: 12) */
 #define SHOT_SPEED 4        /* px a frame (power shot: 5) */
 #define SHOT_LIFE 40        /* frames */
-#define MAX_NEAR 10         /* enemies looked at in a frame */
+#define MAX_NEAR 8          /* enemies looked at in a frame */
 #define NBOLT 4             /* a boss's bolts in the air */
 
 typedef struct {
@@ -59,11 +59,18 @@ typedef struct {
     Bolt b[NBOLT];
 } Boss;
 
-/* the enemies near the mech this frame and where they are (the front end draws these) */
+/* the enemies near the mech this frame: where they are and their boxes (the front end
+ * draws these) */
+typedef struct {
+    uint16_t x;             /* top-left of the 16x16 sprite, px */
+    uint8_t y, len;         /* (len: a crusher's reach) */
+    uint8_t i;              /* index in Stage.enemy */
+    uint8_t kind;
+    uint16_t bx;            /* hit box */
+    uint8_t by, bw, bh;
+} Near;
 extern uint8_t near_n;
-extern uint8_t near_i[MAX_NEAR];
-extern uint16_t near_x[MAX_NEAR];
-extern uint8_t near_y[MAX_NEAR], near_len[MAX_NEAR];
+extern Near near[MAX_NEAR];
 
 /* more events of a frame (world_step) */
 #define EV2_BOMB 0x01       /* the gravity bomb went off */

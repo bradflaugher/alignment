@@ -751,6 +751,8 @@ static void part_asm(void) __naked
 
 void part_update(void)
 {
+    /* (a DMG moves its particles at 30 Hz: the frame belongs to the game) */
+    if (!is_cgb && (frame & 1)) return;
     pk_x = (uint16_t)(cam_x - 8 + shake_x);
     pk_y = (uint8_t)(cam_y - 16 + shake_y);
     pk_blink = (uint8_t)(frame & 2);
@@ -835,4 +837,160 @@ void gfx_load_boss(uint8_t art)
     ASSETS_IN();
     set_sprite_data(BOSS_TILE_BASE, 32, boss_tiles[art]);
     ASSETS_OUT();
+}
+
+/* spr16a: a 16x16 sprite from four 8x8 tiles at OAM slot a: position spr_x / spr_y
+ * (OAM coordinates), tiles spr_t + 0..3 (TL TR BL BR), attributes spr_p; its X / Y
+ * flip bits also swap the tiles round. Asm: drawing is most of a DMG frame. */
+uint8_t spr_x, spr_y, spr_t, spr_p;
+
+void spr16a(uint8_t slot) __naked
+{
+    (void)slot;
+    __asm
+        ld  l, a
+        ld  h, #0
+        add hl, hl
+        add hl, hl
+        ld  de, #_shadow_OAM
+        add hl, de
+        ld  a, (_spr_p)
+        ld  c, a
+        ld  a, (_spr_t)
+        ld  b, a
+        ld  a, c
+        and a, #0x60
+        swap a
+        rrca
+        ld  e, a            ; tile xor mask: 1 = x flip, 2 = y flip
+        ld  a, (_spr_x)
+        ld  d, a
+        ; top left
+        ld  a, (_spr_y)
+        ld  (hl+), a
+        ld  a, d
+        ld  (hl+), a
+        ld  a, e
+        add a, b
+        ld  (hl+), a
+        ld  a, c
+        ld  (hl+), a
+        ; top right
+        ld  a, (_spr_y)
+        ld  (hl+), a
+        ld  a, d
+        add a, #8
+        ld  (hl+), a
+        ld  a, e
+        xor a, #1
+        add a, b
+        ld  (hl+), a
+        ld  a, c
+        ld  (hl+), a
+        ; bottom left
+        ld  a, (_spr_y)
+        add a, #8
+        ld  (hl+), a
+        ld  a, d
+        ld  (hl+), a
+        ld  a, e
+        xor a, #2
+        add a, b
+        ld  (hl+), a
+        ld  a, c
+        ld  (hl+), a
+        ; bottom right
+        ld  a, (_spr_y)
+        add a, #8
+        ld  (hl+), a
+        ld  a, d
+        add a, #8
+        ld  (hl+), a
+        ld  a, e
+        xor a, #3
+        add a, b
+        ld  (hl+), a
+        ld  (hl), c
+        ret
+    __endasm;
+}
+
+/* spr32a: a 32x32 picture (16 sprites, tiles spr_t + row * 4 + column, mirrored by the
+ * flip bits of spr_p) at OAM slot a, top-left spr_x / spr_y (OAM coordinates); bit k of
+ * spr_vis says sprite k (row k / 4, column k % 4) is on screen. */
+uint16_t spr_vis;
+static uint8_t spr_xm;
+
+void spr32a(uint8_t slot) __naked
+{
+    (void)slot;
+    __asm
+        ld  l, a
+        ld  h, #0
+        add hl, hl
+        add hl, hl
+        ld  de, #_shadow_OAM
+        add hl, de
+        ; tile xor mask: x flip 3, y flip 12
+        ld  a, (_spr_p)
+        ld  c, #0
+        bit 5, a
+        jr  z, 00001$
+        ld  c, #3
+    00001$:
+        bit 6, a
+        jr  z, 00002$
+        ld  a, c
+        or  a, #12
+        ld  c, a
+    00002$:
+        ld  a, c
+        ld  (_spr_xm), a
+        ld  a, (_spr_vis)
+        ld  e, a
+        ld  a, (_spr_vis + 1)
+        ld  d, a
+        ld  b, #0
+    00003$:
+        srl d
+        rr  e
+        jr  nc, 00004$
+        ld  a, b
+        and a, #0x0C
+        add a, a
+        ld  c, a
+        ld  a, (_spr_y)
+        add a, c
+        ld  (hl+), a
+        ld  a, b
+        and a, #3
+        add a, a
+        add a, a
+        add a, a
+        ld  c, a
+        ld  a, (_spr_x)
+        add a, c
+        ld  (hl+), a
+        ld  a, (_spr_xm)
+        xor a, b
+        ld  c, a
+        ld  a, (_spr_t)
+        add a, c
+        ld  (hl+), a
+        ld  a, (_spr_p)
+        ld  (hl+), a
+        jr  00005$
+    00004$:
+        xor a, a
+        ld  (hl+), a
+        inc hl
+        inc hl
+        inc hl
+    00005$:
+        inc b
+        ld  a, b
+        cp  a, #16
+        jr  nz, 00003$
+        ret
+    __endasm;
 }

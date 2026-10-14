@@ -12,10 +12,15 @@
 #include "mul8.h"
 
 uint8_t near_n;
-uint8_t near_i[MAX_NEAR];
-uint16_t near_x[MAX_NEAR];
-uint8_t near_y[MAX_NEAR], near_len[MAX_NEAR];
+Near near[MAX_NEAR];
 uint8_t ev2;
+#ifdef __SDCC
+#include <gb/gb.h>
+uint8_t dbg_w[6];
+#define MARK(k) (dbg_w[k] = LY_REG)
+#else
+#define MARK(k)
+#endif
 uint16_t ev_kx;
 uint8_t ev_ky;
 
@@ -430,38 +435,44 @@ static uint16_t boss_frame(void)
 
 static void near_scan(uint16_t t, uint16_t px)
 {
+    /* the enemies within a screen or so of the mech (stages keep them sorted by x0),
+     * where they are and their boxes */
     uint8_t i, mcx = (uint8_t)(px >> 4), lo, hi, n = 0;
     const Enemy *e = S->enemy;
-    lo = mcx > 10 ? (uint8_t)(mcx - 10) : 0;
-    hi = (uint8_t)(mcx + 11);
+    Near *q = near;
+    lo = mcx > 7 ? (uint8_t)(mcx - 7) : 0;
+    hi = (uint8_t)(mcx + 8);
     for (i = 0; i < S->nenemies; i++, e++) {
         if (e->x1 < lo) continue;
-        if (e->x0 > hi) break;          /* (stages keep their enemies sorted by x0) */
+        if (e->x0 > hi) break;
         if (!e->hp) continue;
-        enemy_pos(e, t, &near_x[n], &near_y[n], &near_len[n]);
-        near_i[n] = i;
+        if (e->kind == E_TURRET) {
+            /* (turrets don't move) */
+            q->x = (uint16_t)((uint16_t)(e->speed ? e->x1 : e->x0) << 4);
+            q->y = (uint8_t)(e->y0 << 4);
+            q->len = 0;
+        } else {
+            enemy_pos(e, t, &q->x, &q->y, &q->len);
+        }
+        q->i = i;
+        q->kind = e->kind;
+        q->bx = q->x + 2;
+        q->bw = 12;
+        switch (e->kind) {
+        case E_CRUSHER: q->by = q->y; q->bh = (uint8_t)(q->len + 16); break;
+        case E_TURRET: q->by = (uint8_t)(q->y + (e->y1 ? 0 : 4)); q->bh = 12; break;
+        default: q->bx = q->x + 3; q->bw = 10; q->by = (uint8_t)(q->y + 3); q->bh = 10; break;
+        }
+        q++;
         if (++n == MAX_NEAR) break;
     }
     near_n = n;
 }
 
-/* an enemy's box, for shots and touch */
-static void enemy_box(uint8_t j, uint16_t *x, uint8_t *y, uint8_t *w, uint8_t *h)
+static uint16_t damage_enemy(const Near *q, uint8_t dmg)
 {
-    const Enemy *e = &S->enemy[near_i[j]];
-    *x = near_x[j] + 2;
-    *w = 12;
-    switch (e->kind) {
-    case E_CRUSHER: *y = near_y[j]; *h = (uint8_t)(near_len[j] + 16); break;
-    case E_TURRET: *y = (uint8_t)(near_y[j] + (e->y1 ? 0 : 4)); *h = 12; break;
-    default: *x = near_x[j] + 3; *w = 10; *y = (uint8_t)(near_y[j] + 3); *h = 10; break;
-    }
-}
-
-static uint16_t damage_enemy(uint8_t j, uint8_t dmg)
-{
-    Enemy *e = &S->enemy[near_i[j]];
-    kill_at((uint16_t)(near_x[j] + 8), (uint8_t)(near_y[j] + 8));
+    Enemy *e = &S->enemy[q->i];
+    kill_at((uint16_t)(q->x + 8), (uint8_t)(q->y + 8));
     if (e->hp > dmg) {
         e->hp = (uint8_t)(e->hp - dmg);
         return EV_HIT;
@@ -470,11 +481,21 @@ static uint16_t damage_enemy(uint8_t j, uint8_t dmg)
     return EV_KILL;
 }
 
+/* does the box (x, y, w, h) overlap the near enemy q's box? */
+#define HITS_NEAR(q, x, y, w, h) ((x) < (uint16_t)((q)->bx + (q)->bw) && (q)->bx < (uint16_t)((x) + (w)) && \
+                                  (y) < (uint8_t)((q)->by + (q)->bh) && (q)->by < (uint8_t)((y) + (h)))
+
+/* the boss's box this frame (worked out once) */
+static uint16_t bbx;
+static uint8_t bby, bbw, bbh;
+
 static uint16_t shots(void)
 {
-    uint16_t ev = 0, ex, cx;
-    uint8_t i, j, ey, ew, eh, t, cy;
+    uint16_t ev = 0, cx, sx;
+    uint8_t i, j, t, cy, sy;
     Shot *s = P->shot;
+    const Near *q;
+    if (B->active) boss_box(&bbx, &bby, &bbw, &bbh);
     for (i = 0; i < NSHOT; i++, s++) {
         if (!s->life) continue;
         s->life--;
@@ -489,21 +510,20 @@ static uint16_t shots(void)
             ev2 |= EV2_TINK;
             continue;
         }
-        for (j = 0; j < near_n; j++) {
-            if (!S->enemy[near_i[j]].hp) continue;
-            enemy_box(j, &ex, &ey, &ew, &eh);
-            if (!overlap((uint16_t)(s->x + 1), (uint8_t)(s->y + 3), 6, 2, ex, ey, ew, eh)) continue;
+        sx = (uint16_t)(s->x + 1);
+        sy = (uint8_t)(s->y + 3);
+        for (j = near_n, q = near; j; j--, q++) {
+            if (!HITS_NEAR(q, sx, sy, 6, 2)) continue;
+            if (!S->enemy[q->i].hp) continue;
             s->life = 0;
-            if (S->enemy[near_i[j]].kind == E_CRUSHER) ev2 |= EV2_TINK;
-            else ev |= damage_enemy(j, P->power ? 2 : 1);
+            if (q->kind == E_CRUSHER) ev2 |= EV2_TINK;
+            else ev |= damage_enemy(q, P->power ? 2 : 1);
             break;
         }
-        if (s->life && B->active) {
-            boss_box(&ex, &ey, &ew, &eh);
-            if (overlap((uint16_t)(s->x + 1), (uint8_t)(s->y + 3), 6, 2, ex, ey, ew, eh)) {
-                s->life = 0;
-                boss_damage(P->power ? 2 : 1);
-            }
+        if (s->life && B->active && sx < (uint16_t)(bbx + bbw) && bbx < (uint16_t)(sx + 6) &&
+            sy < (uint8_t)(bby + bbh) && bby < (uint8_t)(sy + 2)) {
+            s->life = 0;
+            boss_damage(P->power ? 2 : 1);
         }
     }
     return ev;
@@ -511,23 +531,26 @@ static uint16_t shots(void)
 
 static uint16_t touch(uint16_t t)
 {
-    uint16_t ev = 0, ex, bx;
-    uint8_t j, ey, ew, eh;
-    for (j = 0; j < near_n && !P->m.dead; j++) {
-        Enemy *e = &S->enemy[near_i[j]];
+    uint16_t ev = 0, bx;
+    uint8_t j;
+    const Near *q;
+    for (j = near_n, q = near; j && !P->m.dead; j--, q++) {
+        Enemy *e = &S->enemy[q->i];
         if (!e->hp) continue;
         /* a turret's bolt */
-        if (e->kind == E_TURRET && turret_bolt(e, t, &bx) &&
-            hits_mech((uint16_t)(bx + 2), (uint8_t)(near_y[j] + 6), 4, 4))
-            ev |= hurt(DIE_BOLT);
-        enemy_box(j, &ex, &ey, &ew, &eh);
-        if (!hits_mech(ex, ey, ew, eh)) continue;
-        if (e->kind == E_CRUSHER) {
+        if (q->kind == E_TURRET && turret_bolt(e, t, &bx)) {
+            bx += 2;
+            if (mx < (uint16_t)(bx + 4) && bx < (uint16_t)(mx + MW) && my < (uint8_t)(q->y + 10) &&
+                (uint8_t)(q->y + 6) < (uint8_t)(my + MH))
+                ev |= hurt(DIE_BOLT);
+        }
+        if (!HITS_NEAR(q, mx, my, MW, MH)) continue;
+        if (q->kind == E_CRUSHER) {
             P->m.dead = DIE_CRUSHER;
         } else if (ALONG(P->m.vy) >= 16 &&
-                   (gd > 0 ? (uint8_t)(my + MH) <= (uint8_t)(ey + 7) : my + 7 >= (uint8_t)(ey + eh))) {
+                   (gd > 0 ? (uint8_t)(my + MH) <= (uint8_t)(q->by + 7) : my + 7 >= (uint8_t)(q->by + q->bh))) {
             /* falling onto it along gravity: stomped flat, and a bounce */
-            ev |= damage_enemy(j, 3) | EV_STOMP;
+            ev |= damage_enemy(q, 3) | EV_STOMP;
             P->m.vy = ALONG(-56);
             P->m.ground = 0;
             P->m.airflip = 1;
@@ -546,10 +569,10 @@ static uint16_t bomb(void)
     P->bomb = 0;
     ev2 |= EV2_BOMB;
     for (j = 0; j < near_n; j++) {
-        Enemy *e = &S->enemy[near_i[j]];
+        Enemy *e = &S->enemy[near[j].i];
         if (e->hp && e->kind != E_CRUSHER) {
             e->hp = 0;
-            kill_at((uint16_t)(near_x[j] + 8), (uint8_t)(near_y[j] + 8));
+            kill_at((uint16_t)(near[j].x + 8), (uint8_t)(near[j].y + 8));
             ev |= EV_KILL;
         }
     }
@@ -581,7 +604,9 @@ uint16_t world_step(Player *p, Stage *st, Boss *b, uint8_t in, uint16_t t) CORE_
     P = p;
     B = b;
     ev2 = 0;
+    MARK(0);
     ev = mech_step(m, st, in, t);
+    MARK(1);
     if (ev & EV_ITEM) take_item();
     if (p->inv) p->inv--;
     if (ev & EV_DEAD) return ev;
@@ -591,6 +616,7 @@ uint16_t world_step(Player *p, Stage *st, Boss *b, uint8_t in, uint16_t t) CORE_
     mx = (uint16_t)(px + HB_X + 1);
     my = (uint8_t)(py + HB_Y + 1);
     near_scan(t, px);
+    MARK(2);
     if ((ev & EV_FLIP) && p->bomb) ev |= bomb();
     /* the cannon */
     if (p->cd) p->cd--;
@@ -610,7 +636,9 @@ uint16_t world_step(Player *p, Stage *st, Boss *b, uint8_t in, uint16_t t) CORE_
         }
     }
     ev |= shots();
+    MARK(3);
     ev |= touch(t);
+    MARK(4);
     /* the boss */
     if (!b->dead) {
         arena_box();
@@ -622,6 +650,7 @@ uint16_t world_step(Player *p, Stage *st, Boss *b, uint8_t in, uint16_t t) CORE_
             ev2 |= EV2_BOSS_ON;
         }
     }
+    MARK(5);
     if (m->dead) ev = (uint16_t)((ev & ~(EV_EXIT | EV_HURT)) | EV_DEAD);
     return ev;
 }

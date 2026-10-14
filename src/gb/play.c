@@ -23,6 +23,7 @@ uint16_t stage_t;           /* the stage clock: enemies and lasers run on it */
 uint8_t play_state;         /* PS_*: what the game is doing */
 uint16_t play_lag;          /* frames the loop missed (the ROM tests check it stays 0) */
 uint8_t play_ly;            /* the scanline the last frame's work ended on (tests) */
+uint8_t dbg_ly[8], dbg_e[4];
 static uint8_t last_frame, lag_armed;
 
 enum { PS_CARD = 0, PS_PLAY, PS_DEAD, PS_CLEAR, PS_PAUSE };
@@ -71,58 +72,46 @@ static const char *const boss_names[NUM_BK] = {
 static uint16_t mech_px(void) { return (uint16_t)(mech.x >> 4); }
 static uint8_t mech_py(void) { return (uint8_t)(mech.y >> 4); }
 
-static void spr16(uint8_t slot, int16_t sx, int16_t sy, uint8_t tile, uint8_t fx, uint8_t fy, uint8_t prop)
+/* a 16x16 sprite (four 8x8) at screen position (sx, sy), tiles spr_t.., attributes
+ * spr_p (its flip bits mirror it) (off screen: hidden). gfx.c's spr16a (asm) writes it. */
+static void spr16(uint8_t slot, int16_t sx, int16_t sy)
 {
-    /* straight into the shadow OAM: four 8x8 sprites, mirrored as needed */
-    OAM_item_t *o = &shadow_OAM[slot];
-    uint8_t x0, x1, y0, y1, t0, t1, t2, t3;
     if (sx < -15 || sx > 167 || sy < -15 || sy > 151) {
+        OAM_item_t *o = &shadow_OAM[slot];
         o[0].y = o[1].y = o[2].y = o[3].y = 0;
         return;
     }
-    if (fx) prop |= S_FLIPX;
-    if (fy) prop |= S_FLIPY;
-    x0 = (uint8_t)(sx + 8);
-    x1 = (uint8_t)(sx + 16);
-    y0 = (uint8_t)(sy + 16);
-    y1 = (uint8_t)(sy + 24);
-    /* tiles TL TR BL BR, swapped by the flips */
-    t0 = tile; t1 = (uint8_t)(tile + 1); t2 = (uint8_t)(tile + 2); t3 = (uint8_t)(tile + 3);
-    if (fx) { uint8_t k = t0; t0 = t1; t1 = k; k = t2; t2 = t3; t3 = k; }
-    if (fy) { uint8_t k = t0; t0 = t2; t2 = k; k = t1; t1 = t3; t3 = k; }
-    o->y = y0; o->x = x0; o->tile = t0; o->prop = prop; o++;
-    o->y = y0; o->x = x1; o->tile = t1; o->prop = prop; o++;
-    o->y = y1; o->x = x0; o->tile = t2; o->prop = prop; o++;
-    o->y = y1; o->x = x1; o->tile = t3; o->prop = prop;
+    spr_x = (uint8_t)(sx + 8);
+    spr_y = (uint8_t)(sy + 16);
+    spr16a(slot);
 }
+#define SPR(t, p) (spr_t = (t), spr_p = (p))
+#define FLIPS(fx, fy) ((uint8_t)(((fx) ? S_FLIPX : 0) | ((fy) ? S_FLIPY : 0)))
 
-/* a 32x32 picture: 16 sprites, tiles base + row * 4 + column, mirrored as needed */
+/* a 32x32 picture: 16 sprites, tiles base + row * 4 + column, mirrored as needed (gfx.c's
+ * spr32a writes them) */
 static void spr32(int16_t sx, int16_t sy, uint8_t base, uint8_t fx, uint8_t fy, uint8_t prop)
 {
-    OAM_item_t *o = &shadow_OAM[SP_ENEMY];
-    uint8_t r, c, sr, sc;
-    if (sx < -31 || sx > 167 || sy < -31 || sy > 151) {
-        for (r = 0; r < 16; r++, o++) o->y = 0;
-        return;
+    uint8_t r, cm = 0, rm = 0;
+    uint16_t vis = 0xFFFF;
+    if (sx > -8 && sx < 136 && sy > -16 && sy < 120) goto all;     /* (all of it on screen) */
+    vis = 0;
+    for (r = 0; r < 4; r++) {
+        int16_t x = (int16_t)(sx + 8 + (r << 3)), y = (int16_t)(sy + 16 + (r << 3));
+        if (x > 0 && x < 168) cm |= (uint8_t)(1 << r);
+        if (y > 0 && y < 160) rm |= (uint8_t)(1 << r);
     }
+    for (r = 0; r < 4; r++)
+        if (rm & (1 << r)) vis |= (uint16_t)cm << (r << 2);
+all:
     if (fx) prop |= S_FLIPX;
     if (fy) prop |= S_FLIPY;
-    for (r = 0; r < 4; r++) {
-        int16_t y = (int16_t)(sy + 16 + (r << 3));
-        sr = fy ? (uint8_t)(3 - r) : r;
-        for (c = 0; c < 4; c++, o++) {
-            int16_t x = (int16_t)(sx + 8 + (c << 3));
-            sc = fx ? (uint8_t)(3 - c) : c;
-            if (x <= 0 || x >= 168 || y <= 0 || y >= 160) {
-                o->y = 0;
-                continue;
-            }
-            o->y = (uint8_t)y;
-            o->x = (uint8_t)x;
-            o->tile = (uint8_t)(base + (sr << 2) + sc);
-            o->prop = prop;
-        }
-    }
+    spr_x = (uint8_t)(sx + 8);
+    spr_y = (uint8_t)(sy + 16);
+    spr_t = base;
+    spr_p = prop;
+    spr_vis = vis;
+    spr32a(SP_ENEMY);
 }
 
 static void hide4(uint8_t slot)
@@ -369,7 +358,8 @@ static void draw_mech(void)
     }
     pal = pose == POSE_DEAD ? SPAL_DEAD : (mech.g == G_DOWN ? SPAL_MECH_P : SPAL_MECH_G);
     if (player.shield && (frame & 8)) pal = SPAL_WHITE;
-    spr16(SP_MECH, sx, sy, tile, mech.facing, mech.g == G_UP, pal);
+    SPR(tile, (uint8_t)((pal) | FLIPS(mech.facing, mech.g == G_UP)));
+    spr16(SP_MECH, sx, sy);
 }
 
 static void draw_shots(void)
@@ -410,26 +400,29 @@ static void draw_enemies(void)
 {
     /* from the world step's list of enemies near the mech (positions already worked out) */
     uint8_t j, n = 0, k, rods = 0, len, age;
-    uint16_t ex, bx;
+    uint16_t bx;
     uint8_t ey;
     int16_t sx, sy;
     OAM_item_t *rod = &shadow_OAM[SP_ROD];
+    const Near *q = near;
+    uint16_t cx = (uint16_t)(cam_x + shake_x);
+    uint8_t cy = (uint8_t)(cam_y + shake_y);
     bolt_o = &shadow_OAM[SP_BOLT];
     bolt_n = 0;
-    for (j = 0; j < near_n && n < NUM_ESPR; j++) {
-        const Enemy *e = &stage.enemy[near_i[j]];
+    for (j = near_n; j && n < NUM_ESPR; j--, q++) {
+        const Enemy *e = &stage.enemy[q->i];
         if (!e->hp) continue;
-        ex = near_x[j];
-        ey = near_y[j];
-        sx = (int16_t)(ex - cam_x) - shake_x;
-        sy = (int16_t)ey - (int16_t)cam_y - shake_y;
+        sx = (int16_t)(q->x - cx);
         if (sx < -16 || sx > 160) continue;
-        len = near_len[j];
-        if (e->kind == E_CRUSHER) {
+        ey = q->y;
+        sy = (int16_t)ey - (int16_t)cy;
+        len = q->len;
+        if (q->kind == E_CRUSHER) {
             /* the piston head, and its rod above it */
             int16_t ry = (int16_t)(sy + len - 8);
             uint8_t rx = (uint8_t)(sx + 12);
-            spr16((uint8_t)(SP_ENEMY + (n << 2)), sx, (int16_t)(sy + len), SPR_CRATE, 0, 0, SPAL_CRATE);
+            SPR(SPR_CRATE, (uint8_t)((SPAL_CRATE) | FLIPS(0, 0)));
+            spr16((uint8_t)(SP_ENEMY + (n << 2)), sx, (int16_t)(sy + len));
             for (k = 0; k < NUM_ROD && rods < NUM_ROD; k++, ry -= 16) {
                 if (ry < sy - 8) break;
                 if (ry < -8 || ry > 151) continue;
@@ -442,55 +435,62 @@ static void draw_enemies(void)
             }
         } else {
             uint8_t t, fx, fy, pal = SPAL_BOT;
-            if (e->kind == E_TURRET) {
+            if (q->kind == E_TURRET) {
                 age = (uint8_t)((uint8_t)(stage_t + (uint16_t)(e->phase << 2)) & 127);
                 t = age >= 8 && age < 16 ? SPR_TURRET_FIRE : SPR_TURRET;
-                if (age == 8 && sx >= 0 && sx < 160) sfx_play(SFX_TURRET);
+                if ((age >> 1) == 4 && sx >= 0 && sx < 160) sfx_play(SFX_TURRET);
                 fx = e->speed;
                 fy = e->y1;
-                if (turret_bolt(e, stage_t, &bx)) bolt_draw(bx, (uint8_t)(ey + 4));
+                if (age >= 8 && turret_bolt(e, stage_t, &bx)) bolt_draw(bx, (uint8_t)(ey + 4));
             } else {
-                t = e->kind == E_HOVER ? ((frame >> 2) & 1 ? SPR_BOT_A : SPR_BOT_B)
+                t = q->kind == E_HOVER ? ((frame >> 2) & 1 ? SPR_BOT_A : SPR_BOT_B)
                                        : ((frame >> 3) & 1 ? SPR_BOT_WALK : SPR_BOT_A);
-                fx = (uint8_t)(ex > mech_px());
-                fy = (uint8_t)(e->kind == E_CRAWLER && e->y1);
+                fx = (uint8_t)(q->x > mech_px());
+                fy = (uint8_t)(q->kind == E_CRAWLER && e->y1);
             }
-            if (hit_t && hit_i == near_i[j] && (hit_t & 2)) pal = SPAL_WHITE;
-            spr16((uint8_t)(SP_ENEMY + (n << 2)), sx, sy, t, fx, fy, pal);
+            if (hit_t && hit_i == q->i && (hit_t & 2)) pal = SPAL_WHITE;
+            SPR(t, (uint8_t)((pal) | FLIPS(fx, fy)));
+            spr16((uint8_t)(SP_ENEMY + (n << 2)), sx, sy);
         }
         n++;
     }
     /* explosions in the slots left */
     for (k = 0; k < NBOOM && n < NUM_ESPR; k++) {
         if (!boom_t[k]) continue;
-        spr16((uint8_t)(SP_ENEMY + (n << 2)), (int16_t)(boom_x[k] - cam_x) - shake_x,
-              (int16_t)boom_y[k] - (int16_t)cam_y - shake_y, boom_t[k] > 8 ? SPR_EXPLODE1 : SPR_EXPLODE2,
-              (uint8_t)(boom_t[k] & 4), 0, (uint8_t)((frame & 2) ? SPAL_DEAD : SPAL_WHITE));
+        SPR(boom_t[k] > 8 ? SPR_EXPLODE1 : SPR_EXPLODE2, (uint8_t)(((uint8_t)((frame & 2) ? SPAL_DEAD : SPAL_WHITE)) | FLIPS((uint8_t)(boom_t[k] & 4), 0)));
+        spr16((uint8_t)(SP_ENEMY + (n << 2)), (int16_t)(boom_x[k] - cx), (int16_t)boom_y[k] - (int16_t)cy);
         n++;
     }
     for (; n < NUM_ESPR; n++) hide4((uint8_t)(SP_ENEMY + (n << 2)));
     for (; rods < NUM_ROD; rods++, rod++) rod->y = 0;
+    for (k = bolt_n; k < NUM_BOLT; k++, bolt_o++) bolt_o->y = 0;
 }
 
-static void draw_boss(void)
+static void draw_boss_bolts(void)
 {
-    uint8_t k, pal, base, fx = 0, fy = 0, rods = 0;
-    int16_t sx = (int16_t)(boss.x - cam_x) - shake_x;
-    int16_t sy = (int16_t)boss.y - (int16_t)cam_y - shake_y;
-    OAM_item_t *rod = &shadow_OAM[SP_ROD];
+    uint8_t k;
     const Bolt *b = boss.b;
     bolt_o = &shadow_OAM[SP_BOLT];
     bolt_n = 0;
     for (k = 0; k < NBOLT; k++, b++)
         if (b->life) bolt_draw(b->x, b->y);
     for (k = bolt_n; k < NUM_BOLT; k++, bolt_o++) bolt_o->y = 0;
+}
+
+static void draw_boss_body(void)
+{
+    uint8_t k, pal, base, fx = 0, fy = 0, rods = 0;
+    int16_t sx = (int16_t)(boss.x - cam_x) - shake_x;
+    int16_t sy = (int16_t)boss.y - (int16_t)cam_y - shake_y;
+    OAM_item_t *rod = &shadow_OAM[SP_ROD];
     pal = boss.flash & 2 ? SPAL_WHITE : SPAL_BOT;
     if (boss_boom && (frame & 2)) pal = SPAL_DEAD;
     if (boss.dead && !boss_boom) {
         for (k = 0; k < 16; k += 4) hide4((uint8_t)(SP_ENEMY + k));
     } else if (boss.kind == BK_TWIN) {
         uint8_t t = boss.state == 1 ? SPR_MECH_FLIP : (frame >> 3) & 1 ? SPR_MECH_WALK1 : SPR_MECH_WALK2;
-        spr16(SP_ENEMY, sx, sy, t, (uint8_t)(boss.vx < 0), boss.g, pal);
+        SPR(t, (uint8_t)((pal) | FLIPS((uint8_t)(boss.vx < 0), boss.g)));
+        spr16(SP_ENEMY, sx, sy);
         for (k = 4; k < 16; k += 4) hide4((uint8_t)(SP_ENEMY + k));
     } else {
         switch (boss.kind) {
@@ -539,10 +539,19 @@ static void boom(uint16_t x, uint8_t y)
 static void frame_end(void)
 {
     uint8_t k;
+    dbg_ly[4] = LY_REG;
     draw_mech();
     draw_shots();
-    if (stage.arena.kind && (boss.active || boss_boom)) draw_boss();
-    else draw_enemies();
+    dbg_ly[5] = LY_REG;
+    /* (a DMG redraws the enemies every other frame: the time goes to the game itself) */
+    if (stage.arena.kind && (boss.active || boss_boom)) {
+        /* (a DMG draws the boss and its bolts on alternate frames) */
+        if (is_cgb || (frame & 1)) draw_boss_body();
+        if (is_cgb || !(frame & 1)) draw_boss_bolts();
+    } else if (is_cgb || (frame & 1)) {
+        draw_enemies();
+    }
+    dbg_ly[6] = LY_REG;
     for (k = 0; k < NBOOM; k++)
         if (boom_t[k]) boom_t[k]--;
     if (hit_t) hit_t--;
@@ -558,6 +567,7 @@ static void frame_end(void)
         lag_armed = 0;
     }
     last_frame = frame;
+    dbg_ly[7] = LY_REG;
     input_poll();
     fx_update();
 }
@@ -1049,10 +1059,12 @@ uint8_t play_run(void) BANKED
             continue;
         }
         in = input_bits();
+        dbg_ly[0] = LY_REG;
         /* the world */
         stage_t++;
         if (run.stage_time < 65535u) run.stage_time++;
         ev = world_step(&player, &stage, &boss, in, stage_t);
+        dbg_e[0] = LY_REG;
         if (ev & EV_FLIP) {
             flip_fx();
             pose = POSE_FLIP;
@@ -1076,14 +1088,15 @@ uint8_t play_run(void) BANKED
             if (ev & EV_STOMP) fx_shake(2);
         } else if (ev & EV_HIT) {
             sfx_play(SFX_HIT);
-            hit_i = near_i[0];
+            hit_i = near[0].i;
             {
                 uint8_t j;
                 for (j = 0; j < near_n; j++)
-                    if (near_x[j] + 8 == ev_kx && near_y[j] + 8 == ev_ky) hit_i = near_i[j];
+                    if (near[j].x + 8 == ev_kx && near[j].y + 8 == ev_ky) hit_i = near[j].i;
             }
             hit_t = 8;
         }
+        dbg_e[1] = LY_REG;
         if (ev & EV_HURT) {
             sfx_play(SFX_HURT);
             fx_shake(3);
@@ -1105,6 +1118,7 @@ uint8_t play_run(void) BANKED
             }
             if ((ev2 & EV2_BOSS_FIRE) && !(ev & EV_SHOOT)) sfx_play(SFX_TURRET);
         }
+        dbg_e[2] = LY_REG;
         if (ev & (EV_CELL | EV_CHECK | EV_ITEM)) {
             if (ev & EV_CELL) cell_fx();
             if (ev & EV_ITEM) item_fx();
@@ -1112,6 +1126,7 @@ uint8_t play_run(void) BANKED
         } else if (fx_pend && !(ev & (EV_FLIP | EV_LAND | EV_KILL))) {
             fx_deferred();
         }
+        dbg_ly[1] = LY_REG;
         if (boss_boom) boss_throes();
         if (ev & EV_DEAD) {
             if (death()) {
@@ -1147,8 +1162,10 @@ uint8_t play_run(void) BANKED
             laser_was = laser_on(stage_t);
             gfx_laser(laser_was);
         }
+        dbg_ly[2] = LY_REG;
         camera(0);
         stream();
+        dbg_ly[3] = LY_REG;
         if (hud_msg_t) {
             if (!--hud_msg_t) hud_full();
         } else {

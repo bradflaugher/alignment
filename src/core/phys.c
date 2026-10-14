@@ -36,12 +36,8 @@ static const uint8_t *cells;
 static uint8_t cw, cg;
 
 /* the cell under pixel (px, py): column-major, 16 bytes a column */
-static uint8_t cell_t(uint16_t px, uint8_t py)
-{
-    uint8_t cx = (uint8_t)(px >> 4);
-    if (cx >= cw) return T_WALL;
-    return cells[(uint16_t)(px & 0xFFF0u) | (py >> 4)];
-}
+#define cell_t(px, py) ((uint8_t)((uint16_t)(px) >> 4) >= cw ? (uint8_t)T_WALL : \
+                        cells[((uint16_t)(px) & 0xFFF0u) | (uint8_t)((uint8_t)(py) >> 4)])
 
 uint8_t solid_px(const Stage *S, uint16_t px, uint8_t py, uint8_t g) CORE_BANKED
 {
@@ -53,18 +49,21 @@ uint8_t solid_px(const Stage *S, uint16_t px, uint8_t py, uint8_t g) CORE_BANKED
     return (uint8_t)(t == T_WALL || t == T_DOOR || (t == T_PHASE_P && g == G_DOWN) || (t == T_PHASE_G && g == G_UP));
 }
 
-static uint8_t solid_c(uint16_t px, uint8_t py)
-{
-    uint8_t t = cell_t(px, py);
-    return (uint8_t)(t == T_WALL || t == T_DOOR || (t == T_PHASE_P && cg == G_DOWN) || (t == T_PHASE_G && cg == G_UP));
-}
+/* solid for the mech in each gravity, by terrain (a table: this runs ~20 times a frame) */
+static const uint8_t solid_tab[2][NUM_T] = {
+    /* down */ { 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
+    /* up   */ { 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
+};
+typedef char solid_tab_covers_terrain[NUM_T == 21 ? 1 : -1];
+static const uint8_t *solid_g;      /* solid_tab[the gravity of this step] */
+#define SOLID_C(px, py) (solid_g[cell_t((px), (py))])
 
 /* does the hitbox with its top-left at pixel (hx, hy) touch anything solid? */
 static uint8_t box_hits(uint16_t hx, uint8_t hy)
 {
     uint16_t rx = (uint16_t)(hx + HB_W - 1);
     uint8_t by = (uint8_t)(hy + HB_H - 1);
-    return (uint8_t)(solid_c(hx, hy) || solid_c(rx, hy) || solid_c(hx, by) || solid_c(rx, by));
+    return (uint8_t)(SOLID_C(hx, hy) || SOLID_C(rx, hy) || SOLID_C(hx, by) || SOLID_C(rx, by));
 }
 
 /* does the box touch a cell of type t? */
@@ -159,6 +158,7 @@ uint16_t mech_step(Mech *m, Stage *S, uint8_t in, uint16_t t) CORE_BANKED
     cells = S->cell;
     cw = S->w;
     cg = m->g;
+    solid_g = solid_tab[cg];
     gd = m->g ? -1 : 1;
 
     /* ---- run ---- */
@@ -200,6 +200,7 @@ uint16_t mech_step(Mech *m, Stage *S, uint8_t in, uint16_t t) CORE_BANKED
             if (!m->ground) m->airflip = 0;
             m->g ^= 1;
             cg = m->g;
+            solid_g = solid_tab[cg];
             gd = (int8_t)-gd;
             m->ground = 0;
             m->coyote = 0;
@@ -233,7 +234,7 @@ uint16_t mech_step(Mech *m, Stage *S, uint8_t in, uint16_t t) CORE_BANKED
     /* standing: if the ground is still there, stay on it (no sub-pixel creeping) */
     if (m->ground && ALONG(m->vy) >= 0) {
         ey = gd > 0 ? (uint8_t)(py + HB_Y + HB_H) : (uint8_t)(py + HB_Y - 1);
-        if (solid_c((uint16_t)(px + HB_X), ey) || solid_c((uint16_t)(px + HB_X + HB_W - 1), ey)) {
+        if (SOLID_C((uint16_t)(px + HB_X), ey) || SOLID_C((uint16_t)(px + HB_X + HB_W - 1), ey)) {
             m->vy = 0;
             m->y = (uint16_t)((uint16_t)py << 4);
             goto moved;
@@ -271,7 +272,7 @@ moved:
     /* still standing? (walking off a ledge) */
     if (m->ground) {
         ey = gd > 0 ? (uint8_t)(py + HB_Y + HB_H) : (uint8_t)(py + HB_Y - 1);
-        if (!solid_c((uint16_t)(px + HB_X), ey) && !solid_c((uint16_t)(px + HB_X + HB_W - 1), ey)) {
+        if (!SOLID_C((uint16_t)(px + HB_X), ey) && !SOLID_C((uint16_t)(px + HB_X + HB_W - 1), ey)) {
             m->ground = 0;
             m->coyote = COYOTE;
         } else if (m->vx) {
