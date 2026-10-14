@@ -9,19 +9,22 @@ extern uint8_t joy, joy_prev, joy_new;
 
 /* sprite slots (8x8 OAM mode) */
 #define SP_MECH   0     /* 4 */
-#define SP_ENEMY  4     /* 4 enemies x 4 */
+#define SP_SHOT   4     /* the mech's shots, 3 */
+#define SP_BOLT   7     /* turret and boss bolts, 4 */
+#define NUM_BOLT  4
+#define SP_ENEMY  11    /* 4 enemies (or explosions) x 4; a boss takes all 16 */
 #define NUM_ESPR  4
-#define SP_ROD    20    /* a crusher's piston rod, 6 */
-#define NUM_ROD   6
-#define SP_PART   26    /* particles */
-#define NUM_PART  12
-#define SP_MISC   38    /* 2 misc */
+#define SP_ROD    27    /* a crusher's piston rod, 3 */
+#define NUM_ROD   3
+#define SP_PART   30    /* particles */
+#define NUM_PART  10
 
 #define HUD_WY 136      /* the HUD is one window row at the bottom of the screen */
 
 void gfx_init(void);
 void gfx_load_play_tiles(void);
 void gfx_load_title_tiles(void);
+void gfx_load_boss(uint8_t art);
 void gfx_hide_sprites(void);
 void gfx_draw_logo(uint8_t y0);
 void input_poll(void);

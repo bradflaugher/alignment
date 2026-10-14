@@ -11,6 +11,9 @@ extern uint8_t render_checked;  /* the checkpoint has been reached (its pad is l
 void render_prebuild(const Stage *S) BANKED;
 /* queue stage column cx for the BG map (written in VBlank) */
 void render_column(const Stage *S, uint8_t cx) BANKED;
+/* build column cx again (its cells changed: arena doors) and, if it is on the map now,
+ * queue it */
+void render_rebuild(const Stage *S, uint8_t cx, uint8_t on_map) BANKED;
 /* redraw one cell now (energy cell taken, checkpoint lit) */
 void render_cell(const Stage *S, uint8_t cx, uint8_t cy) BANKED;
 

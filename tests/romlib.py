@@ -6,7 +6,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROM = os.path.join(ROOT, 'build', 'alignment.gb')
 SYM = os.path.join(ROOT, 'build', 'alignment.sym')
 MSGEN = os.path.join(ROOT, 'build', 'msgen')
-SAVE_ZEN_SEED, SAVE_ZEN_STAGE = 9, 11
 PS_CARD, PS_PLAY, PS_DEAD, PS_CLEAR, PS_PAUSE = range(5)
 
 
@@ -54,16 +53,21 @@ class Game:
         os.makedirs(d, exist_ok=True)
         self.pb.screen.image.save(os.path.join(d, '%s_%s.png' % (name, self.tag)))
 
-    def start_zen(self, seed, stage=1):
-        """Title -> ZEN on a known seed and stage; returns when the stage is playable."""
+    def start(self, mode, stage, seed=0):
+        """Title -> a sector of the campaign (mode 1) or an endless stage (mode 2), via the
+        game's test hook; returns when the stage is playable."""
         if self.pb.frame_count < 150:
             self.run(150 - self.pb.frame_count)
-        self.poke('save', SAVE_ZEN_SEED, [seed & 0xFF, seed >> 8])
-        self.poke('save', SAVE_ZEN_STAGE, [stage & 0xFF, stage >> 8])
-        self.press('start', after=10)
-        self.press('down')
-        self.press('a')
+        self.poke('dbg_seed', 0, [seed & 0xFF, seed >> 8])
+        self.poke('dbg_stage', 0, [stage & 0xFF, stage >> 8])
+        self.poke('dbg_mode', 0, [mode])
         return self.wait(lambda: self.u8('play_state') == PS_PLAY, 3000)
 
+    def start_sector(self, n):
+        return self.start(1, n)
+
+    def start_endless(self, seed, stage=1):
+        return self.start(2, stage, seed)
+
     def mech_xy(self):
-        return self.u16('mech') >> 4, self.u16('mech', 2) >> 4
+        return self.u16('player') >> 4, self.u16('player', 2) >> 4

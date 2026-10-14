@@ -13,27 +13,27 @@
 .332....
 .32.....
 
-# step counter: mech footprints
-@tile UI_STEP
-.333....
-.333....
-.222.33.
-.....333
-.33..333
-3333.222
-3332....
-222.....
-
-# star (par / best)
-@tile UI_STAR
-...33...
-...33...
-33333333
+# hull pip: one unit of hull energy (full)
+@tile UI_HULL
+........
 .233332.
-..3333..
-.332233.
-.32..23.
-.2....2.
+.322223.
+.323223.
+.322223.
+.322223.
+.233332.
+........
+
+# hull pip, empty (same shape, dim)
+@tile UI_HULL_EMPTY
+........
+.111111.
+.1....1.
+.1....1.
+.1....1.
+.1....1.
+.111111.
+........
 
 # energy cell (matches MT_CELL)
 @tile UI_CELL
@@ -46,16 +46,16 @@
 .211112.
 ..2222..
 
-# exit flag
-@tile UI_FLAG
-.3......
-.33332..
-.3333332
-.33332..
-.3......
-.2......
-.2......
-.2......
+# shield icon
+@tile UI_SHIELD
+.333333.
+.322223.
+.323323.
+.323323.
+.322223.
+..3223..
+...33...
+........
 
 # box frame: chamfered neon rail
 @tile UI_BOX_TL

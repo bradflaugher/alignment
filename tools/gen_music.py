@@ -29,6 +29,10 @@ Drum patterns (noise channel) are grids, one char per row:
     K kick, k soft kick, S snare, s ghost snare, h hat, H accent hat,
     o open hat, C crash, t rim tick, z shaker, g glitch, '.' or '-' = hold.
     Spaces and '|' are ignored.
+
+Patterns with identical source text are stored once, even across songs, so
+one-bar blocks transposed per bar in the order lists ((name, semitones)) and
+quotes of another song's patterns cost only their 2-byte order entries.
 ---------------------------------------------------------------------------
 """
 import math
@@ -41,11 +45,14 @@ ASSETS = os.path.join(ROOT, "assets", "music")
 OUT_C = os.path.join(ROOT, "src", "gb", "music_data.c")
 OUT_H = os.path.join(ROOT, "src", "gb", "music_data.h")
 
-SONG_ORDER = ["TITLE", "DECK_A", "DECK_B", "DECK_C", "ZEN", "GAMEOVER"]
+SONG_ORDER = ["TITLE", "DECK_A", "DECK_B", "DECK_C", "ZEN", "GAMEOVER",
+              "BOSS", "CLEAR", "ENDING", "FINAL"]
 SFX_ORDER = ["STEP", "BUMP", "FLIP", "LAND", "PUSH", "CRATE_LAND", "CELL",
              "EXIT_OPEN", "EXIT", "ZAP", "CRUSH", "BOT_STEP", "BOT_DIE", "DOOR",
              "REWIND", "MENU", "SELECT", "OPTIMAL", "NEWMECH", "HINT", "ERROR",
-             "SCAN", "DECK"]
+             "SCAN", "DECK",
+             "SHOOT", "SHOOT_POWER", "HIT", "EXPLODE", "HURT", "ITEM", "BOMB",
+             "BOSS_HIT", "BOSS_DIE", "ALARM", "TURRET", "JUMP"]
 
 # ---- stream byte codes (must match sound.c) -------------------------------
 CMD_LEN = 0x80      # 0x80..0xBF : len = (b & 0x3F) + 1
@@ -639,7 +646,9 @@ def build(stats=False, check=False):
 
     def get_pattern(song, pname, ch):
         kind = CHKIND[ch]
-        key = (song["_name"], pname, kind)
+        # identical pattern sources are stored once, even across songs (a
+        # song may quote / reuse another song's patterns at no ROM cost)
+        key = (song["patterns"][pname], kind)
         if key in pat_cache:
             return pat_cache[key]
         src = song["patterns"][pname]

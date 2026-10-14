@@ -21,11 +21,11 @@ ASSETS = os.path.join(ROOT, 'assets')
 
 def c_array(src, name):
     """Integer values of `const uint8_t|uint16_t name[...] = {...};` (numbers only)."""
-    m = re.search(r'const\s+uint(?:8|16)_t\s+%s\s*\[[^\]]*\]\s*=\s*\{(.*?)\};' % name,
+    m = re.search(r'const\s+uint(?:8|16)_t\s+%s\s*(?:\[[^\]]*\]\s*)+=\s*\{(.*?)\};' % name,
                   src, re.S)
     if not m:
         raise AssertionError('array %s not found' % name)
-    body = re.sub(r'/\*.*?\*/', '', m.group(1), flags=re.S)
+    body = re.sub(r'/\*.*?\*/', '', m.group(1), flags=re.S).replace('{', ',').replace('}', ',')
     return [int(v, 0) for v in body.replace('\n', ' ').split(',') if v.strip()]
 
 
@@ -81,7 +81,10 @@ class TestGenAssets(unittest.TestCase):
         for n in G.UI_REQUIRED:
             self.assertIn(n, ui)
         spr = enum_names(self.h, 'SPR_MECH_IDLE')
-        self.assertEqual(spr[:22], G.SPR_REQUIRED)
+        self.assertEqual(spr[:len(G.SPR_REQUIRED)], G.SPR_REQUIRED)
+        self.assertEqual(enum_names(self.h, 'BOSS_SENTINEL'),
+                         ['BOSS_SENTINEL', 'BOSS_PISTON', 'BOSS_HIVE', 'NUM_BOSS_ART'])
+        self.assertEqual(G.BOSS_ORDER, ['BOSS_SENTINEL', 'BOSS_PISTON', 'BOSS_HIVE'])
         for n in G.BG_PAL_REQUIRED + G.SPR_PAL_REQUIRED:
             self.define(n)
 
@@ -96,7 +99,8 @@ class TestGenAssets(unittest.TestCase):
                      'uint8_t logo_tiles[LOGO_NTILES*16]', 'uint8_t logo_map[LOGO_W*LOGO_H]',
                      'uint8_t logo_cgb_attr[LOGO_W*LOGO_H]', 'uint16_t bg_cgb_pal[8*4]',
                      'uint16_t spr_cgb_pal[8*4]',
-                     'uint16_t deck_cgb_pal[NUM_DECK_PALS*4]'):
+                     'uint16_t deck_cgb_pal[NUM_DECK_PALS*4]',
+                     'uint8_t boss_tiles[NUM_BOSS_ART][32*16]'):
             self.assertIn('extern const %s;' % decl, self.h)
 
     def test_banked(self):
@@ -110,7 +114,9 @@ class TestGenAssets(unittest.TestCase):
         n_art = int(self.define('NUM_ART_TILES'))
         n_spr = int(self.define('NUM_SPR_TILES'))
         self.assertLessEqual(n_art, 176)
-        self.assertLessEqual(n_spr, 128)
+        self.assertLessEqual(n_spr, 96)   # tiles 96..127 are boss art
+        self.assertEqual(self.define('BOSS_TILE_BASE'), '96')
+        self.assertEqual(len(c_array(self.c, 'boss_tiles')), len(G.BOSS_ORDER) * 32 * 16)
         sizes = {'font_tiles': 64 * 16, 'ui_tiles': 16 * 16, 'art_tiles': n_art * 16,
                  'spr_tiles': n_spr * 16, 'mt_tiles': len(G.MT_ORDER) * 4,
                  'mt_cgb_pal': len(G.MT_ORDER), 'wall_tile': 4 * len(G.WALL_VARIANTS),
@@ -148,7 +154,7 @@ class TestGenAssets(unittest.TestCase):
         self.assertTrue(ui and max(ui) < 16)
         n_spr = int(self.define('NUM_SPR_TILES'))
         for name, val in re.findall(r'^\s+(SPR_\w+) = (\d+)', self.h, re.M):
-            big = any(name.startswith(p) for p in ('SPR_MECH', 'SPR_BOT', 'SPR_CRATE'))
+            big = name.startswith(G.SPR_16X16_PREFIXES)
             self.assertLessEqual(int(val) + (4 if big else 1), n_spr, name)
         for f in c_array(self.c, 'anim_frames'):
             self.assertTrue(2 <= f <= 8, f)
@@ -206,7 +212,8 @@ class TestGenAssets(unittest.TestCase):
     def test_tiles_valid(self):
         d = self.data
         tiles = list(d['font']) + [t for _, t in d['ui']] + list(d['art']) + \
-            [t for _, t in d['spr']] + list(d['logo_tiles'])
+            [t for _, t in d['spr']] + list(d['logo_tiles']) + \
+            [t for _, bt in d['boss'] for t in bt]
         for t in tiles:
             self.assertEqual(len(t), 8)
             for row in t:
@@ -245,6 +252,61 @@ class TestGenAssets(unittest.TestCase):
             a = mt[m * 4 + c] - G.TILE_ART_BASE
             s = base + c
             self.assertEqual(art[a * 16:a * 16 + 16], spr[s * 16:s * 16 + 16])
+
+    def test_removed_and_renamed_names(self):
+        gone = ['SPR_ARROW_R', 'SPR_ARROW_U', 'SPR_FLIP_ICON', 'SPR_THRUST',
+                'MT_PLATE_C', 'MT_PLATE_C_ON', 'MT_FIELD_V', 'MT_FIELD_H', 'MT_EXIT_U',
+                'MT_EXIT_D', 'MT_HATCH_L', 'MT_HATCH_T', 'MT_HATCH_B', 'ANIM_FIELD_V',
+                'ANIM_FIELD_H', 'ANIM_EXIT_U', 'ANIM_EXIT_D', 'UI_STEP', 'UI_STAR', 'UI_FLAG']
+        for n in gone:
+            self.assertIsNone(re.search(r'\b%s\b' % n, self.h), n)
+        for n in ('UI_HULL', 'UI_HULL_EMPTY', 'UI_SHIELD', 'SPR_RING', 'SPR_SHOT',
+                  'SPR_SHOT_POWER', 'SPR_BOLT', 'SPR_TURRET', 'SPR_TURRET_FIRE',
+                  'SPR_EXPLODE1', 'SPR_EXPLODE2', 'SPR_MECH_SHOOT', 'MT_CRATE', 'MT_DOOR_OPEN',
+                  'ANIM_DOOR', 'MT_ITEM_POWER', 'MT_ITEM_SHIELD', 'MT_ITEM_BOMB',
+                  'MT_ITEM_REPAIR', 'MT_BOSS_DOOR', 'MT_DECO_PIPE', 'MT_DECO_PIPE_V',
+                  'MT_DECO_WINDOW', 'MT_DECO_LIGHT', 'MT_DECO_GRATE'):
+            self.assertRegex(self.h, r'\b%s\b' % n)
+
+    def test_boss_art(self):
+        boss = dict(self.data['boss'])
+        self.assertEqual([n for n, _ in self.data['boss']], G.BOSS_ORDER)
+        flat = c_array(self.c, 'boss_tiles')
+        for b, name in enumerate(G.BOSS_ORDER):
+            tiles = boss[name]
+            self.assertEqual(len(tiles), 32)
+            enc = [v for t in tiles for v in G.encode_tile(t)]
+            self.assertEqual(flat[b * 512:(b + 1) * 512], enc, name)
+            f0, f1 = enc[:256], enc[256:]
+            self.assertNotEqual(f0, f1, '%s: the two frames must differ' % name)
+            for f in (f0, f1):
+                self.assertGreater(sum(1 for v in f if v), 64, '%s: frame nearly empty' % name)
+
+    def test_deco_is_background(self):
+        """Decoration stays dark: colour 1 (+ at most a few colour-2 pixels)."""
+        mts = dict((n, t) for n, _, _, t in self.data['mt'])
+        for n in G.MT_ORDER:
+            if not n.startswith('MT_DECO_'):
+                continue
+            px = [v for t in mts[n] for row in t for v in row]
+            self.assertEqual(px.count(3), 0, n)
+            self.assertLessEqual(px.count(2), 4, n)
+            self.assertGreater(px.count(1), 16, n)
+
+    def test_sprite_limit_enforced(self):
+        tmp = tempfile.mkdtemp(prefix='al_assets_big_')
+        try:
+            for fn in os.listdir(ASSETS):
+                if fn.endswith('.txt'):
+                    shutil.copy(os.path.join(ASSETS, fn), tmp)
+            n = G.BOSS_TILE_BASE - len(self.data['spr']) + 1
+            with open(os.path.join(tmp, 'sprites.txt'), 'a') as f:
+                for i in range(n):
+                    f.write('\n@tile SPR_PAD_%d\n' % i + '\n'.join(['33333333'] * 8) + '\n')
+            with self.assertRaises(G.AssetError):
+                G.load_assets(tmp)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     # ---- generator behaviour ------------------------------------------------
     def test_deterministic(self):

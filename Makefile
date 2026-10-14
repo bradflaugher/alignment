@@ -7,7 +7,7 @@ BUILD     := build
 OBJ       := $(BUILD)/obj
 ROM       := $(BUILD)/alignment.gb
 
-CORE_SRC  := src/core/stage.c src/core/phys.c src/core/rng.c src/core/run.c
+CORE_SRC  := src/core/stage.c src/core/phys.c src/core/world.c src/core/levels.c src/core/rng.c src/core/run.c
 CORE_HDR  := $(wildcard src/core/*.h)
 GB_SRC    := $(filter-out src/gb/assets.c src/gb/music_data.c,$(wildcard src/gb/*.c))
 GB_ASM    := $(wildcard src/gb/*.s)
@@ -68,7 +68,7 @@ $(OBJ):
 	mkdir -p $(OBJ)
 
 # ---- host builds of the core: the stage generator, the physics and the physics bot
-HOST_CORE := src/core/stage.c src/core/phys.c src/core/rng.c
+HOST_CORE := src/core/stage.c src/core/phys.c src/core/world.c src/core/levels.c src/core/rng.c
 $(BUILD)/msgen: tools/msgen.c tests/physbot.c tests/physbot.h $(HOST_CORE) $(CORE_HDR) | $(BUILD)
 	$(CC) $(HOST_CFLAGS) -Isrc/core -Itests -o $@ tools/msgen.c tests/physbot.c $(HOST_CORE)
 

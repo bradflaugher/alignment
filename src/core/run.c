@@ -33,10 +33,14 @@ uint8_t run_cell(Run *r) CORE_BANKED
     return 0;
 }
 
+void run_score(Run *r, uint16_t points) CORE_BANKED
+{
+    r->score += points;
+}
+
 uint8_t run_death(Run *r) CORE_BANKED
 {
     r->deaths++;
-    if (r->mode != MODE_RUN) return 0;
     if (r->lives) r->lives--;
     return (uint8_t)(r->lives == 0);
 }

@@ -6,10 +6,10 @@
 typedef struct {
     uint8_t magic[2];       /* 'A','L' */
     uint8_t version;
-    uint16_t best_stage;    /* furthest stage reached in a RUN */
+    uint16_t best_stage;    /* furthest stage reached in ENDLESS */
     uint32_t best_score;
-    uint16_t zen_seed;
-    uint16_t zen_stage;     /* where the ZEN walk resumes */
+    uint8_t sector;         /* the furthest campaign sector reached (1..) */
+    uint8_t campaign_done;  /* the last sector has been cleared */
     uint16_t total_cells;   /* lifetime energy cells */
     uint16_t total_stages;  /* lifetime stages cleared */
     uint8_t checksum;

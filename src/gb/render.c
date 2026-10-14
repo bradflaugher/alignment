@@ -73,8 +73,21 @@ static uint8_t cell_mt(uint8_t t, uint8_t y, uint8_t h)
     case T_EXIT: return MT_EXIT_R;
     case T_LASER: return MT_DOOR_CLOSED;      /* (blinks: gfx_laser) */
     case T_GIRDER: return MT_BACK1;
+    case T_ITEM_P: return MT_ITEM_POWER;
+    case T_ITEM_S: return MT_ITEM_SHIELD;
+    case T_ITEM_B: return MT_ITEM_BOMB;
+    case T_ITEM_R: return MT_ITEM_REPAIR;
+    case T_DOOR: return MT_BOSS_DOOR;
+    case T_DOOR_OPEN: return MT_EMPTY;
+    case T_DECO_PIPE: return MT_DECO_PIPE;
+    case T_DECO_PIPE_V: return MT_DECO_PIPE_V;
+    case T_DECO_WINDOW: return MT_DECO_WINDOW;
+    case T_DECO_LIGHT: return MT_DECO_LIGHT;
+    case T_DECO_GRATE: return MT_DECO_GRATE;
     }
-    /* empty: now and then a little background machinery, never right by a floor */
+    /* empty: now and then a little background machinery, never right by a floor (the
+     * hand-made sectors place their own) */
+    if (cS->sector) return MT_EMPTY;
     if ((h & 15) == 3 && !wc[y + 2] && !wc[y]) return MT_BACK2;
     if ((h & 31) == 9) return MT_BACK3;
     return MT_EMPTY;
@@ -152,6 +165,16 @@ void render_column(const Stage *S, uint8_t cx) BANKED
 {
     (void)S;
     col_push(cx);
+}
+
+void render_rebuild(const Stage *S, uint8_t cx, uint8_t on_map) BANKED
+{
+    uint8_t on = stream_on;
+    stream_on = 0;
+    build_column(S, cx);
+    store_column(cx);
+    stream_on = on;
+    if (on_map) col_push(cx);
 }
 
 void render_cell(const Stage *S, uint8_t cx, uint8_t cy) BANKED

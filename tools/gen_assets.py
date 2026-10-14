@@ -32,6 +32,11 @@ Source format (all files in assets/*.txt; assets/music is not read)
     ``@anim ANIM_X mt=MT_Y pal=PALNAME speed=N``  animated metatile: a strip
                        of N frames of 16x16 side by side.  Frame 0 is also the
                        metatile's resting art; its 4 tiles are never shared.
+    ``@boss BOSS_X``   boss sprite art: a 64x32 canvas holding two 32x32 frames
+                       side by side.  Frame f is split into 16 tiles (4x4,
+                       row-major) stored as boss_tiles[BOSS_X][(f*16+k)*16].
+                       Drawn with the SPAL_BOT colours; loaded by the game into
+                       sprite tiles BOSS_TILE_BASE..127.
     ``@logo``          the title logo pixel canvas (width = LOGO_W*8).
     ``@logo_attr``     one char per logo cell: CGB BG palette number 0-7.
     ``@bgpal N NAME c0 c1 c2 c3`` / ``@sprpal ...`` / ``@deckpal ...``
@@ -53,6 +58,9 @@ NUM_FONT = 64
 NUM_UI = 16
 MAX_ART = 176
 MAX_SPR = 128
+BOSS_TILE_BASE = 96     # sprite tiles 96..127 are reserved for one boss's art
+MAX_SPR_ART = BOSS_TILE_BASE
+BOSS_TILES = 32         # 2 frames x 16 tiles (32x32 each)
 MAX_LOGO_TILES = 176
 MAX_ANIM_FRAMES = 8
 
@@ -64,19 +72,22 @@ WALL_VARIANTS = ['FILL', 'HEDGE', 'VEDGE', 'OUTER', 'INNER', 'FILL2']
 MT_ORDER = [
     'MT_EMPTY', 'MT_BACK1', 'MT_BACK2', 'MT_BACK3', 'MT_PLASMA', 'MT_CELL',
     'MT_CRATE', 'MT_PHASE_P_ON', 'MT_PHASE_P_OFF', 'MT_PHASE_G_ON',
-    'MT_PHASE_G_OFF', 'MT_PLATE_F', 'MT_PLATE_F_ON', 'MT_PLATE_C',
-    'MT_PLATE_C_ON', 'MT_DOOR_CLOSED', 'MT_DOOR_OPEN', 'MT_FIELD_V',
-    'MT_FIELD_H', 'MT_EXIT_R', 'MT_EXIT_U', 'MT_EXIT_D', 'MT_HATCH_L',
-    'MT_HATCH_T', 'MT_HATCH_B',
+    'MT_PHASE_G_OFF', 'MT_PLATE_F', 'MT_PLATE_F_ON', 'MT_DOOR_CLOSED',
+    'MT_DOOR_OPEN', 'MT_EXIT_R',
+    'MT_ITEM_POWER', 'MT_ITEM_SHIELD', 'MT_ITEM_BOMB', 'MT_ITEM_REPAIR',
+    'MT_BOSS_DOOR',
+    'MT_DECO_PIPE', 'MT_DECO_PIPE_V', 'MT_DECO_WINDOW', 'MT_DECO_LIGHT',
+    'MT_DECO_GRATE',
 ]
 
 ANIM_ORDER = [
-    'ANIM_PLASMA', 'ANIM_CELL', 'ANIM_FIELD_V', 'ANIM_FIELD_H', 'ANIM_EXIT_R',
-    'ANIM_EXIT_U', 'ANIM_EXIT_D', 'ANIM_DOOR',
+    'ANIM_PLASMA', 'ANIM_CELL', 'ANIM_EXIT_R', 'ANIM_DOOR',
 ]
 
+BOSS_ORDER = ['BOSS_SENTINEL', 'BOSS_PISTON', 'BOSS_HIVE']
+
 UI_REQUIRED = [
-    'UI_BOLT', 'UI_STEP', 'UI_STAR', 'UI_CELL', 'UI_FLAG',
+    'UI_BOLT', 'UI_HULL', 'UI_HULL_EMPTY', 'UI_CELL', 'UI_SHIELD',
     'UI_BOX_TL', 'UI_BOX_T', 'UI_BOX_TR', 'UI_BOX_L', 'UI_BOX_R',
     'UI_BOX_BL', 'UI_BOX_B', 'UI_BOX_BR', 'UI_BAR_FULL', 'UI_BAR_HALF',
     'UI_GRAV_DOWN', 'UI_GRAV_UP',
@@ -85,10 +96,15 @@ UI_REQUIRED = [
 SPR_REQUIRED = [
     'SPR_MECH_IDLE', 'SPR_MECH_IDLE2', 'SPR_MECH_WALK1', 'SPR_MECH_WALK2',
     'SPR_MECH_FALL', 'SPR_MECH_FLIP', 'SPR_MECH_LAND', 'SPR_MECH_DEAD',
-    'SPR_BOT_A', 'SPR_BOT_B', 'SPR_BOT_WALK', 'SPR_BOT_DEAD', 'SPR_CRATE',
+    'SPR_MECH_SHOOT', 'SPR_BOT_A', 'SPR_BOT_B', 'SPR_BOT_WALK', 'SPR_BOT_DEAD', 'SPR_CRATE',
     'SPR_SPARK_BIG', 'SPR_SPARK_SMALL', 'SPR_PIXEL', 'SPR_STREAK', 'SPR_STAR',
-    'SPR_ARROW_R', 'SPR_ARROW_U', 'SPR_CURSOR', 'SPR_FLIP_ICON',
+    'SPR_CURSOR', 'SPR_RING', 'SPR_SHOT', 'SPR_SHOT_POWER', 'SPR_BOLT',
+    'SPR_TURRET', 'SPR_TURRET_FIRE', 'SPR_EXPLODE1',
+    'SPR_EXPLODE2',
 ]
+# 16x16 sprites (4 tiles TL,TR,BL,BR); everything else is a single 8x8 tile
+SPR_16X16_PREFIXES = ('SPR_MECH', 'SPR_BOT', 'SPR_CRATE', 'SPR_TURRET',
+                      'SPR_EXPLODE')
 
 BG_PAL_REQUIRED = ['PAL_UI', 'PAL_WALL', 'PAL_GREEN', 'PAL_PURPLE',
                    'PAL_HAZARD', 'PAL_DIM']
@@ -253,6 +269,7 @@ def load_assets(assets_dir, strict=True):
     metas = {}       # name -> (tiles[4], palname)
     anims = {}       # name -> (mt, palname, speed, frames)
     spr = []         # list of (name, tile)
+    boss = {}        # name -> 32 tiles (frame 0 tiles 0..15, frame 1 16..31)
     logo_block = None
     attr_block = None
     pals = {'bgpal': {}, 'sprpal': {}, 'deckpal': {}}
@@ -339,6 +356,19 @@ def load_assets(assets_dir, strict=True):
             if not 1 <= speed <= 255:
                 raise AssetError('%s: bad speed' % b.where)
             anims[name] = (mt, pal, speed, frames)
+        elif k == 'boss':
+            name = b.args[0] if b.args else ''
+            if name not in BOSS_ORDER or name in boss:
+                raise AssetError('%s: bad/duplicate boss %r' % (b.where, name))
+            if b.w != 64 or b.h != 32:
+                raise AssetError('%s: @boss must be 64x32 (two 32x32 frames)' %
+                                 b.where)
+            tiles = []
+            for f in range(2):
+                sub = Block('tile', [], {}, [r[f * 32:f * 32 + 32] for r in b.rows],
+                            b.where)
+                tiles.extend(split_tiles(sub))
+            boss[name] = tiles
         elif k == 'logo':
             logo_block = b
         elif k == 'logo_attr':
@@ -395,8 +425,13 @@ def load_assets(assets_dir, strict=True):
     for n in SPR_REQUIRED:
         if n not in spr_names:
             raise AssetError('missing sprite %s' % n)
-    if len(spr) > MAX_SPR:
-        raise AssetError('too many sprite tiles (%d > %d)' % (len(spr), MAX_SPR))
+    if len(spr) > MAX_SPR_ART:
+        raise AssetError('too many sprite tiles (%d > %d: tiles %d..%d are boss art)'
+                         % (len(spr), MAX_SPR_ART, BOSS_TILE_BASE, MAX_SPR - 1))
+    assert len(spr) <= BOSS_TILE_BASE and BOSS_TILE_BASE + BOSS_TILES == MAX_SPR
+    for n in BOSS_ORDER:
+        if n not in boss:
+            raise AssetError('missing @boss %s' % n)
 
     # ---- room art: walls, static metatiles, animated metatiles ------------
     for v in WALL_VARIANTS:
@@ -510,6 +545,7 @@ def load_assets(assets_dir, strict=True):
         'mt': mt_list,
         'anim': anim_list,
         'spr': spr,
+        'boss': [(n, boss[n]) for n in BOSS_ORDER],
         'logo_w': logo_w,
         'logo_h': logo_h,
         'logo_tiles': uniq,
@@ -645,11 +681,20 @@ def gen(data):
             for al in n.split('|'):
                 spr_items.append((al, '%d' % i))
     a(enum_block(spr_items,
-                 'sprite tile indices.  16x16 frames (MECH, BOT, CRATE, RING) are 4 tiles\n'
-                 '   TL,TR,BL,BR.  Mech frames face right with gravity down: use OAM X flip\n'
-                 '   for left, Y flip for gravity up.  ARROW_R: X flip = left; ARROW_U:\n'
-                 '   Y flip = down.  SPR_RING is the TL quarter of a 16x16 ring (draw 4 with\n'
-                 '   X/Y flips).  The rest are single 8x8 tiles.'))
+                 'sprite tile indices.  16x16 frames (MECH, BOT, CRATE, TURRET, EXPLODE)\n'
+                 '   are 4 tiles TL,TR,BL,BR.  Mech frames (incl. MECH_SHOOT, cannon muzzle at\n'
+                 '   x=15,y=7) face right with gravity down: OAM X flip for left, Y flip for\n'
+                 '   gravity up.  TURRET: floor-mounted (base on row 15), barrel right: X flip\n'
+                 '   = left, Y flip = ceiling.  SHOT / SHOT_POWER travel right (X flip = left).\n'
+                 '   SPR_RING is the TL quarter of a 16x16 ring (draw 4 with X/Y flips).\n'
+                 '   The rest are single 8x8 tiles.  Tiles BOSS_TILE_BASE..127 are boss art.'))
+    a('')
+    a('/* ---- boss art: the game copies one boss (2 frames of 32x32 = 32 tiles) into')
+    a('   sprite tiles BOSS_TILE_BASE..127.  Frame f, tile k (4x4 row-major inside the')
+    a('   32x32 frame) is boss_tiles[b] + (f*16+k)*16.  Colours = SPAL_BOT / DMG_OBP1. */')
+    a(enum_block([(n, None) for n in BOSS_ORDER] + [('NUM_BOSS_ART', None)]))
+    a('#define BOSS_TILE_BASE %d          /* NUM_SPR_TILES <= BOSS_TILE_BASE */' % BOSS_TILE_BASE)
+    a('extern const uint8_t boss_tiles[NUM_BOSS_ART][32*16];')
     a('')
     a('/* ---- title logo: tiles load at TILE_ART_BASE; map holds ABSOLUTE indices ---- */')
     a('#define LOGO_W %d' % data['logo_w'])
@@ -756,6 +801,15 @@ def gen(data):
     c('')
     c(tile_array('spr_tiles', 'NUM_SPR_TILES*16', [t for _, t in data['spr']],
                  [n for n, _ in data['spr']]))
+    c('')
+    c('const uint8_t boss_tiles[NUM_BOSS_ART][32*16] = {')
+    for n, tiles in data['boss']:
+        c('  { /* %s */' % n)
+        for i, t in enumerate(tiles):
+            c('    /* frame %d tile %d */' % (i // 16, i % 16))
+            c(c_bytes(encode_tile(t)))
+        c('  },')
+    c('};')
     c('')
     c(tile_array('logo_tiles', 'LOGO_NTILES*16', data['logo_tiles']))
     c('')

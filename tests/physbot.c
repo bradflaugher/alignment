@@ -1,47 +1,81 @@
-/* physbot - prove a stage can be finished with the real physics and real button presses.
+/* physbot - prove a stage can be finished with the real game code and real buttons.
  *
- * Breadth-first search over mech states (position, speed, gravity, air flip...), where a
- * move is one of 9 inputs (left / right / nothing, each with or without a jump or a flip
- * pressed) held for a few frames. Everything is real: the geometry, plasma, phase blocks,
- * and the drones, crushers and laser gates on the stage clock (they all repeat every 512
- * frames, so the clock modulo 512 is part of a state). Also a library: physbot_solve() is
- * used by the tests and by msgen. */
+ * A best-first search over complete world states (the mech, its shots, every enemy's
+ * armour, the boss) where a move is one of 9 inputs (left / right / nothing, each with
+ * or without a jump or a gravity flip pressed) held for 4 frames, with the cannon held
+ * down the whole time (autofire). Everything is real: geometry, plasma, phase blocks,
+ * drones, crushers, laser gates, turret bolts and the boss. The bot plays strict:
+ * any hit at all is a lost mech, so a path it finds is one a player could take without
+ * a scratch (power-ups are taken as they come, as the game would). The stage clock (enemies repeat every 512
+ * frames) is part of a state.
+ *
+ * Progress, for "best": how far right the mech is; inside a boss arena, how much armour
+ * the boss has lost; after the boss, how far right again. Also a library:
+ * physbot_solve() is used by the tests and by msgen. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "stage.h"
 #include "phys.h"
+#include "world.h"
 #include "physbot.h"
 
 #define HOLD 4
-#define HASH_BITS 22
+#define HASH_BITS 23
 #define HASH_N (1u << HASH_BITS)
-#define MAXQ (6u << 20)
+#define MAXQ (3u << 20)
 
 typedef struct {
-    Mech m;
+    Player p;
+    Boss b;
+    uint8_t hp[MAX_ENEMIES];
+    uint16_t items;     /* power-ups taken (bit per entry of item_at) */
+    uint16_t t;
     uint32_t parent;
     uint8_t act;
     uint8_t jheld;      /* B was held at the end of this node's block */
-    uint16_t t;         /* the stage clock */
 } Node;
 
 static uint64_t *seen;
 static Node *q;
-/* best-first: a queue of node indices per pixel column, always taking the rightmost
- * column, oldest first (so the path does not dawdle) */
-#define NB 2048
-static uint32_t *bnext;         /* next node in the same bucket */
+/* best-first: a queue of node indices per progress value, oldest first */
+#define NB 1024
+static uint32_t *bnext;
 static uint32_t bhead[NB], btail[NB];
 static int bmax;
+static Stage S;
+#define MAX_ITEMS 16
+static uint16_t item_at[MAX_ITEMS];
+static uint8_t item_t[MAX_ITEMS], nitems;
+static uint32_t best_i;
+static int best_p;
+
+static int progress(const Node *n)
+{
+    int cx = n->p.m.x >> 8;
+    if (S.arena.kind == BOSS_NONE) return cx;
+    if (n->b.dead) return 300 + cx;
+    if (n->b.active) return 140 + (n->b.hpmax - n->b.hp) * 4;
+    return cx;
+}
 
 static void bpush(uint32_t i)
 {
-    int b = q[i].m.x >> 8;
+    int b = progress(&q[i]);
     bnext[i] = 0xFFFFFFFFu;
-    if (bhead[b] == 0xFFFFFFFFu) bhead[b] = i;
-    else bnext[btail[b]] = i;
-    btail[b] = i;
+    if (b > best_p) { best_p = b; best_i = i; }
+    if (q[i].b.active) {
+        /* in a fight, newest first: dig into one line of play */
+        bnext[i] = bhead[b];
+        bhead[b] = i;
+        if (bnext[i] == 0xFFFFFFFFu) btail[b] = i;
+    } else if (bhead[b] == 0xFFFFFFFFu) {
+        bhead[b] = i;
+        btail[b] = i;
+    } else {
+        bnext[btail[b]] = i;
+        btail[b] = i;
+    }
     if (b > bmax) bmax = b;
 }
 
@@ -55,23 +89,44 @@ static uint32_t bpop(void)
     return i;
 }
 
-static uint64_t key_of(const Mech *m)
+/* FNV-1a over what matters of a state */
+static uint64_t mix(uint64_t h, uint32_t v)
 {
-    uint64_t k = 0;
-    k |= (uint64_t)(m->x >> 4);                 /* 12 bits */
-    k |= (uint64_t)(m->y >> 4) << 12;           /* 8 */
-    k |= (uint64_t)((m->vx + 64) & 127) << 20;  /* 7 */
-    k |= (uint64_t)((m->vy + 128) & 255) << 27; /* 8 */
-    k |= (uint64_t)m->g << 35;
-    k |= (uint64_t)m->ground << 36;
-    k |= (uint64_t)m->airflip << 37;
-    k |= (uint64_t)m->coyote << 38;             /* 3 */
-    return k + 1;
+    int k;
+    for (k = 0; k < 4; k++) {
+        h ^= (v >> (k * 8)) & 0xFF;
+        h *= 0x100000001B3ull;
+    }
+    return h;
 }
 
 static uint64_t key_node(const Node *n)
 {
-    return key_of(&n->m) ^ ((uint64_t)n->jheld << 45) ^ ((uint64_t)((n->t >> 2) & 127) << 46);
+    const Mech *m = &n->p.m;
+    const Boss *b = &n->b;
+    uint64_t h = 0xCBF29CE484222325ull;
+    int i;
+    h = mix(h, (uint32_t)(m->x >> 4) | (uint32_t)(m->y >> 4) << 16);
+    h = mix(h, (uint32_t)(uint16_t)m->vx | (uint32_t)(uint16_t)m->vy << 16);
+    h = mix(h, (uint32_t)m->g | m->ground << 1 | m->airflip << 2 | m->coyote << 3 | n->jheld << 6 |
+                   (uint32_t)((n->t >> 2) & 127) << 8);
+    /* (shots only tell states apart in a fight: elsewhere they would multiply the
+     * search for nothing) */
+    if (b->active) {
+        h = mix(h, n->p.cd);
+        for (i = 0; i < NSHOT; i++)
+            if (n->p.shot[i].life) h = mix(h, (uint32_t)n->p.shot[i].x | (uint32_t)n->p.shot[i].vx << 16);
+    }
+    for (i = 0; i < S.nenemies; i++) h = mix(h, n->hp[i]);
+    h = mix(h, (uint32_t)n->items | (uint32_t)n->p.power << 16 | (uint32_t)n->p.bomb << 17);
+    if (S.arena.kind != BOSS_NONE) {
+        h = mix(h, (uint32_t)b->hp | b->state << 8 | b->active << 16 | b->dead << 17 | b->g << 18);
+        h = mix(h, (uint32_t)b->x | (uint32_t)b->y << 16);
+        h = mix(h, (uint32_t)b->st | (uint32_t)b->clock << 8 | (uint32_t)b->cycle << 16);
+        for (i = 0; i < NBOLT; i++)
+            if (b->b[i].life) h = mix(h, (uint32_t)b->b[i].x | (uint32_t)b->b[i].y << 16);
+    }
+    return h | 1;
 }
 
 static int insert(uint64_t k)
@@ -85,16 +140,26 @@ static int insert(uint64_t k)
     return 1;
 }
 
-static const uint8_t acts[9][2] = {
+const uint8_t physbot_acts[9][2] = {
     /* held, pressed on the first frame */
     { 0, 0 }, { IN_L, 0 }, { IN_R, 0 },
     { IN_JUMP, IN_JUMP_NEW }, { IN_L | IN_JUMP, IN_JUMP_NEW }, { IN_R | IN_JUMP, IN_JUMP_NEW },
     { 0, IN_FLIP_NEW }, { IN_L, IN_FLIP_NEW }, { IN_R, IN_FLIP_NEW },
 };
 
+/* put the shared stage in the state of node n */
+static void load_state(const Node *n)
+{
+    int i;
+    for (i = 0; i < S.nenemies; i++) S.enemy[i].hp = n->hp[i];
+    for (i = 0; i < nitems; i++) S.cell[item_at[i]] = (n->items >> i) & 1 ? T_EMPTY : item_t[i];
+    arena_reset(&S);
+    if (n->b.active || n->b.dead) arena_seal(&S);
+    if (n->b.dead) arena_open(&S);
+}
+
 int physbot_solve(const Stage *src, unsigned *states, char *path, int pathmax)
 {
-    static Stage S;
     uint32_t qh, qt = 0, i;
     uint16_t c;
     int a, f, win = -1;
@@ -102,17 +167,33 @@ int physbot_solve(const Stage *src, unsigned *states, char *path, int pathmax)
         seen = calloc(HASH_N, sizeof(uint64_t));
         q = malloc(MAXQ * sizeof(Node));
         bnext = malloc(MAXQ * sizeof(uint32_t));
+        if (!seen || !q || !bnext) {
+            fprintf(stderr, "physbot: out of memory\n");
+            exit(2);
+        }
     }
     memset(bhead, 0xFF, sizeof(bhead));
     bmax = -1;
+    best_p = -1;
     memset(seen, 0, HASH_N * sizeof(uint64_t));
     memcpy(&S, src, sizeof(Stage));
-    /* (pickups change nothing for the physics) */
-    for (c = 0; c < (uint16_t)S.w * SH; c++)
+    /* (energy cells and the checkpoint change nothing for the bot; power-ups do) */
+    nitems = 0;
+    for (c = 0; c < (uint16_t)S.w * SH; c++) {
         if (S.cell[c] == T_CELL || S.cell[c] == T_CHECK) S.cell[c] = T_EMPTY;
-    mech_spawn(&q[0].m, S.start_x, S.start_y, G_DOWN);
+        if (T_IS_ITEM(S.cell[c]) && nitems < MAX_ITEMS) {
+            item_at[nitems] = c;
+            item_t[nitems++] = S.cell[c];
+        }
+    }
+    memset(&q[0], 0, sizeof(Node));
+    player_spawn(&q[0].p, S.start_x, S.start_y);
+    q[0].p.strict = 1;
+    q[0].p.hull = 1;
+    boss_reset(&q[0].b, &S);
+    for (i = 0; i < S.nenemies; i++) q[0].hp[i] = S.enemy[i].hp;
     /* settle on the floor first, as the game does (with the clock stopped) */
-    for (f = 0; f < 24; f++) mech_step(&q[0].m, &S, 0, 0);
+    for (f = 0; f < 24; f++) mech_step(&q[0].p.m, &S, 0, 0);
     q[0].t = 0;
     q[0].parent = 0xFFFFFFFFu;
     q[0].jheld = 0;
@@ -123,16 +204,19 @@ int physbot_solve(const Stage *src, unsigned *states, char *path, int pathmax)
         for (a = 0; a < 9 && win < 0; a++) {
             Node n;
             uint16_t ev = 0;
-            n.m = q[qh].m;
-            n.t = q[qh].t;
+            n = q[qh];
+            load_state(&n);
             for (f = 0; f < HOLD; f++) {
-                uint8_t press = f == 0 ? acts[a][1] : 0;
-                /* a jump only starts on a fresh press of B, as on the Game Boy */
+                uint8_t press = f == 0 ? physbot_acts[a][1] : 0;
+                /* a jump only starts on a fresh press, as on the Game Boy */
                 if ((press & IN_JUMP_NEW) && q[qh].jheld) press &= (uint8_t)~IN_JUMP_NEW;
-                ev = mech_step(&n.m, &S, (uint8_t)(acts[a][0] | press), ++n.t);
+                ev = world_step(&n.p, &S, &n.b, (uint8_t)(physbot_acts[a][0] | press | IN_FIRE), ++n.t);
                 if (ev & (EV_DEAD | EV_EXIT)) break;
             }
-            n.jheld = (uint8_t)((acts[a][0] & IN_JUMP) != 0);
+            for (i = 0; i < S.nenemies; i++) n.hp[i] = S.enemy[i].hp;
+            for (i = 0; i < nitems; i++)
+                if (S.cell[item_at[i]] == T_EMPTY) n.items |= (uint16_t)(1u << i);
+            n.jheld = (uint8_t)((physbot_acts[a][0] & IN_JUMP) != 0);
             if (ev & EV_DEAD) continue;
             n.parent = qh;
             n.act = (uint8_t)a;
@@ -147,14 +231,20 @@ int physbot_solve(const Stage *src, unsigned *states, char *path, int pathmax)
             bpush(qt);
             qt++;
         }
+        if (qt >= MAXQ) break;
     }
     if (states) *states = qt;
-    if (win < 0) return 0;
+    if (win < 0) {
+        const Node *n = &q[best_i];
+        fprintf(stderr, "physbot: furthest: x %u y %u g %u t %u boss %u/%u %s\n", n->p.m.x >> 4, n->p.m.y >> 4,
+                n->p.m.g, n->t, n->b.hp, n->b.hpmax, n->b.active ? "fighting" : n->b.dead ? "down" : "waiting");
+        return 0;
+    }
     if (path) {
         /* the inputs, newest last: one char per HOLD frames ('0'..'8') */
         int len = 0;
         uint32_t k = (uint32_t)win;
-        char tmp[8192];
+        static char tmp[16384];
         while (q[k].parent != 0xFFFFFFFFu && len < (int)sizeof(tmp)) {
             tmp[len++] = (char)('0' + q[k].act);
             k = q[k].parent;

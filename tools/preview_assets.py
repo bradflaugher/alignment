@@ -13,6 +13,9 @@ Writes (at N x scale, default 3):
   seams.png          random wall blobs auto-tiled, to check the seams
   decks.png          room 1 with every deck hull palette
   anims.png          every tile animation, frame by frame
+  bosses.png         boss art (both frames, CGB SPAL_BOT + DMG OBP1, flipped)
+  action_cgb.png / action_dmg.png   mock action screen: turrets, shots, items,
+                     decoration, boss door, explosion, HUD pips
 
 Mirrors the game's rendering rules: 0x8800 BG tiles, per-quarter wall
 autotiling (docs/CONTRACTS.md), 8x8 OAM sprites with X/Y flip.  Requires
@@ -196,7 +199,7 @@ ROOM1 = [
     '#2...1...#',
     '#.c..#####',
     '#..###..cE',
-    'H...3#...#',
+    '#...3#...#',
     '###..pp.##',
     '#3....gg.#',
     '#xx#.f#d.#',
@@ -204,15 +207,27 @@ ROOM1 = [
 ]
 
 ROOM2 = [
-    '#####^####',
-    '#..#...V.#',
+    '##########',
+    '#..#...F.#',
     '#x....g#o#',
     '#xx##.gg.#',
     '#.p..1.###',
     '#.3.#....#',
     '##.....c.#',
     '#..2..#..#',
-    '####H#####',
+    '##########',
+]
+
+ROOM3 = [
+    '##########',
+    '#--l--w.B#',
+    '#|......B#',
+    '#|......B#',
+    '#|######B#',
+    '#|.P.S..B#',
+    '#|w..r####',
+    '#+--X--t.#',
+    '##########',
 ]
 
 
@@ -244,23 +259,21 @@ def room_screen(data, grid, gravity_up, deck=0, exit_open=True):
                 m = 'MT_PLATE_F'
             elif ch == 'F':
                 m = 'MT_PLATE_F_ON'
-            elif ch == 'v':
-                m = 'MT_PLATE_C'
-            elif ch == 'V':
-                m = 'MT_PLATE_C_ON'
             elif ch == 'd':
                 m = 'MT_DOOR_CLOSED'
             elif ch == 'o':
                 m = 'MT_DOOR_OPEN'
-            elif ch == 'H':
-                m = 'MT_HATCH_L' if cx == 0 else ('MT_HATCH_T' if cy == 0 else 'MT_HATCH_B')
-            elif ch in 'E^':
-                if cx == RW - 1:
-                    m = 'MT_EXIT_R' if exit_open else 'MT_FIELD_V'
-                elif cy == 0:
-                    m = 'MT_EXIT_U' if exit_open else 'MT_FIELD_H'
-                else:
-                    m = 'MT_EXIT_D' if exit_open else 'MT_FIELD_H'
+            elif ch == 'E':
+                m = 'MT_EXIT_R' if exit_open else 'MT_BOSS_DOOR'
+            elif ch == 'B':
+                m = 'MT_BOSS_DOOR'
+            elif ch in '-|+wlgt':
+                m = {'-': 'MT_DECO_PIPE', '|': 'MT_DECO_PIPE_V', '+': 'MT_DECO_GRATE',
+                     'w': 'MT_DECO_WINDOW', 'l': 'MT_DECO_LIGHT', 'g': 'MT_DECO_GRATE',
+                     't': 'MT_DECO_LIGHT'}[ch]
+            elif ch in 'PSXr':
+                m = {'P': 'MT_ITEM_POWER', 'S': 'MT_ITEM_SHIELD', 'X': 'MT_ITEM_BOMB',
+                     'r': 'MT_ITEM_REPAIR'}[ch]
             if m:
                 s.meta(cx, cy, MT[m])
     return s
@@ -285,7 +298,7 @@ def mockup1(data, deck=0):
         y = rnd.randrange(16, 120)
         s.spr8(x, y, sp['SPR_STREAK'], pal['SPAL_SPARK_P'])
     s.spr8(2 * 16 + 4, 2 * 16 - 4, sp['SPR_SPARK_SMALL'], pal['SPAL_SPARK_G'])
-    s.spr8(3 * 16 + 6, 4 * 16 + 3, sp['SPR_ARROW_R'], pal['SPAL_WHITE'])
+    s.spr8(3 * 16 + 6, 4 * 16 + 3, sp['SPR_SHOT'], pal['SPAL_SPARK_P'])
     return s
 
 
@@ -304,6 +317,34 @@ def mockup2(data, deck=1):
         y = rnd.randrange(16, 120)
         s.spr8(x, y, sp['SPR_STREAK'], pal['SPAL_SPARK_G'], fy=True)
     s.spr8(5 * 16 + 4, 3 * 16 + 4, sp['SPR_SPARK_BIG'], pal['SPAL_SPARK_G'])
+    return s
+
+
+def action_screen(data):
+    """Metal Storm style: the mech shooting turrets, items, decor, boss door."""
+    s = room_screen(data, ROOM3, False)
+    sp = spr_index(data)
+    pal = dict((n, i) for i, (n, _) in enumerate(data['sprpal']))
+    bg = dict((n, i) for i, (n, _) in enumerate(data['bgpal']))
+    ui = dict((a, G.TILE_UI_BASE + i) for i, (n, _) in enumerate(data['ui']) for a in n.split('|'))
+    # HUD row: hull pips + shield
+    for i in range(6):
+        s.put(1 + i, 0, ui['UI_HULL' if i < 4 else 'UI_HULL_EMPTY'], bg['PAL_UI'])
+    s.put(8, 0, ui['UI_SHIELD'], bg['PAL_GREEN'])
+    s.text(12, 0, 'P 03', bg['PAL_UI'])
+    # mech on the platform, firing right at a floor turret
+    s.spr16(2 * 16, 3 * 16, sp['SPR_MECH_SHOOT'], pal['SPAL_MECH_P'])
+    s.spr8(3 * 16 + 4, 3 * 16 + 4, sp['SPR_SHOT'], pal['SPAL_SPARK_P'])
+    s.spr8(4 * 16 + 8, 3 * 16 + 4, sp['SPR_SHOT_POWER'], pal['SPAL_SPARK_G'])
+    s.spr16(7 * 16, 3 * 16, sp['SPR_TURRET_FIRE'], pal['SPAL_BOT'], 1, fx=True)
+    s.spr8(6 * 16, 3 * 16 + 4, sp['SPR_BOLT'], pal['SPAL_DEAD'])
+    # ceiling turret (Y flip) firing down-left
+    s.spr16(4 * 16, 1 * 16, sp['SPR_TURRET'], pal['SPAL_BOT'], 1, fx=True, fy=True)
+    s.spr8(3 * 16 + 2, 2 * 16 + 2, sp['SPR_BOLT'], pal['SPAL_DEAD'])
+    # explosions + a drone below
+    s.spr16(6 * 16, 1 * 16 + 6, sp['SPR_EXPLODE1'], pal['SPAL_DEAD'])
+    s.spr16(6 * 16, 5 * 16, sp['SPR_EXPLODE2'], pal['SPAL_DEAD'])
+    s.spr16(2 * 16, 6 * 16, sp['SPR_BOT_WALK'], pal['SPAL_BOT'], 1)
     return s
 
 
@@ -339,7 +380,7 @@ def title_screen(data):
     s.put(14, y0 + 1, ui['UI_GRAV_UP'], pal['PAL_GREEN'])
     s.put(1, 17, ui['UI_CELL'], pal['PAL_GLOW'])
     s.text(2, 17, '03', pal['PAL_UI'])
-    s.put(5, 17, ui['UI_STAR'], pal['PAL_UI'])
+    s.put(5, 17, ui['UI_SHIELD'], pal['PAL_UI'])
     s.text(6, 17, '12', pal['PAL_UI'])
     s.text(12, 17, 'V1.0', pal['PAL_UI'])
     sp = spr_index(data)
@@ -475,13 +516,16 @@ def sheet(data, scale):
         i = names.index(n)
         p = sp[spn['SPAL_DEAD']] if n.endswith('DEAD') else sp[spn['SPAL_MECH_P']]
         big.append(spr16_img(data, i, p))
-    for n in ['SPR_BOT_A', 'SPR_BOT_B', 'SPR_BOT_WALK', 'SPR_BOT_DEAD', 'SPR_CRATE']:
+    big.append(spr16_img(data, names.index('SPR_MECH_SHOOT'), sp[spn['SPAL_MECH_P']]))
+    for n in ['SPR_BOT_A', 'SPR_BOT_B', 'SPR_BOT_WALK', 'SPR_BOT_DEAD', 'SPR_CRATE',
+              'SPR_TURRET', 'SPR_TURRET_FIRE', 'SPR_EXPLODE1', 'SPR_EXPLODE2']:
         i = names.index(n)
-        p = sp[spn['SPAL_DEAD' if n.endswith('DEAD') else ('SPAL_CRATE' if 'CRATE' in n else 'SPAL_BOT')]]
+        p = sp[spn['SPAL_DEAD' if (n.endswith('DEAD') or 'EXPLODE' in n) else
+                   ('SPAL_CRATE' if 'CRATE' in n else 'SPAL_BOT')]]
         big.append(spr16_img(data, i, p))
     small = []
     for i, (n, t) in enumerate(data['spr']):
-        if n and not any(n.startswith(k) for k in ('SPR_MECH', 'SPR_BOT', 'SPR_CRATE', 'SPR_RING')):
+        if n and not any(n.startswith(k) for k in G.SPR_16X16_PREFIXES + ('SPR_RING',)):
             small.append(t)
     items.append(('SPRITES 16x16', row_img(big, 3)))
     items.append(('SPRITES 8x8 + ring', row_img([tile_img(small, sp[spn['SPAL_WHITE']], 16, transparent=True),
@@ -525,8 +569,10 @@ def sprites_sheet(data, scale):
     sp = [cgb_pal(p) for p in data['sprpal']]
     spn = dict((n, i) for i, (n, _) in enumerate(data['sprpal']))
     names = [n for n, _ in data['spr']]
-    mech = ['SPR_MECH_' + k for k in ('IDLE', 'IDLE2', 'WALK1', 'WALK2', 'FALL', 'FLIP', 'LAND', 'DEAD')]
-    bot = ['SPR_BOT_A', 'SPR_BOT_B', 'SPR_BOT_WALK', 'SPR_BOT_DEAD', 'SPR_CRATE']
+    mech = ['SPR_MECH_' + k for k in ('IDLE', 'IDLE2', 'WALK1', 'WALK2', 'FALL', 'FLIP', 'LAND', 'DEAD',
+                                      'SHOOT')]
+    bot = ['SPR_BOT_A', 'SPR_BOT_B', 'SPR_BOT_WALK', 'SPR_BOT_DEAD', 'SPR_CRATE', 'SPR_TURRET',
+           'SPR_TURRET_FIRE', 'SPR_EXPLODE1', 'SPR_EXPLODE2']
     rows = []
     for palname, dmgreg in (('SPAL_MECH_P', None), ('SPAL_MECH_G', None), (None, G.DMG_OBP0)):
         ims = []
@@ -541,7 +587,8 @@ def sprites_sheet(data, scale):
         ims = []
         for n in bot:
             if dmgreg is None:
-                p = sp[spn['SPAL_DEAD' if n.endswith('DEAD') else ('SPAL_CRATE' if 'CRATE' in n else 'SPAL_BOT')]]
+                p = sp[spn['SPAL_DEAD' if (n.endswith('DEAD') or 'EXPLODE' in n) else
+                           ('SPAL_CRATE' if 'CRATE' in n else 'SPAL_BOT')]]
             else:
                 p = dmg_pal(G.DMG_OBP0 if 'CRATE' in n else dmgreg)
             ims.append(spr16_img(data, names.index(n), p))
@@ -553,6 +600,34 @@ def sprites_sheet(data, scale):
                          spr16_img(data, i, sp[spn['SPAL_MECH_G']], fy=True),
                          spr16_img(data, i, sp[spn['SPAL_MECH_G']], fx=True, fy=True)], 4, (0, 0, 0)))
     return stack([('MECH (purple / green / DMG OBP0), BOTS (CGB / DMG OBP1 / OBP0), FLIPS', col_img(rows, 4))], scale * 2)
+
+
+def boss_img(tiles, frame, pal, fx=False):
+    img = Image.new('RGB', (32, 32))
+    px = img.load()
+    for k in range(16):
+        t = flip_tile(tiles[frame * 16 + k], fx, False)
+        tx, ty = k % 4, k // 4
+        if fx:
+            tx = 3 - tx
+        for y in range(8):
+            for x in range(8):
+                px[tx * 8 + x, ty * 8 + y] = pal[t[y][x]] if t[y][x] else (0, 0, 0)
+    return img
+
+
+def bosses_sheet(data, scale):
+    sp = [cgb_pal(p) for p in data['sprpal']]
+    spn = dict((n, i) for i, (n, _) in enumerate(data['sprpal']))
+    cg = sp[spn['SPAL_BOT']]
+    dm = dmg_pal(G.DMG_OBP1)
+    items = []
+    for name, tiles in data['boss']:
+        ims = [boss_img(tiles, f, cg) for f in (0, 1)]
+        ims += [boss_img(tiles, f, dm) for f in (0, 1)]
+        ims += [boss_img(tiles, 0, cg, fx=True)]
+        items.append(('%s: frame 0 / 1 (CGB), DMG OBP1, X-flipped' % name, row_img(ims, 4, (0, 0, 0))))
+    return stack(items, scale)
 
 
 def seams_img(data, scale, seed=1):
@@ -614,7 +689,7 @@ def main(argv=None):
 
     shots = {}
     for name, scr in (('room1', mockup1(data)), ('room2', mockup2(data)),
-                      ('title', title_screen(data))):
+                      ('action', action_screen(data)), ('title', title_screen(data))):
         if name == 'room2':
             scr.anim_frame(G.ANIM_ORDER.index('ANIM_PLASMA'), 1)
         for cgb in (True, False):
@@ -623,6 +698,7 @@ def main(argv=None):
     save('sheet.png', sheet(data, S), 1)
     save('anims.png', anims_sheet(data, S), 1)
     save('sprites.png', sprites_sheet(data, S), 1)
+    save('bosses.png', bosses_sheet(data, S * 2), 1)
     save('seams.png', seams_img(data, 2), 1)
     decks = [mockup1(data, d).render(True) for d in range(len(data['deckpal']))]
     decks += [mockup2(data, d).render(True) for d in range(len(data['deckpal']))]
@@ -636,8 +712,8 @@ def main(argv=None):
             os.makedirs(dd)
         shots['room1_cgb.png'].save(os.path.join(dd, 'mockup_cgb.png'))
         shots['room1_dmg.png'].save(os.path.join(dd, 'mockup_dmg.png'))
-    print('previews -> %s (art %d/176, sprites %d/128, logo %d/176)' %
-          (od, len(data['art']), len(data['spr']), len(data['logo_tiles'])))
+    print('previews -> %s (art %d/176, sprites %d/%d, logo %d/176)' %
+          (od, len(data['art']), len(data['spr']), G.BOSS_TILE_BASE, len(data['logo_tiles'])))
     return 0
 
 

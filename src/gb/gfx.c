@@ -828,3 +828,11 @@ void gfx_laser(uint8_t on)
     a_door_off = (uint8_t)!on;
     copy_mt_art(MT_DOOR_CLOSED, on ? MT_DOOR_CLOSED : MT_DOOR_OPEN);
 }
+
+/* a boss's 32 tiles into sprite tiles BOSS_TILE_BASE.. (bank 0: it maps the art bank) */
+void gfx_load_boss(uint8_t art)
+{
+    ASSETS_IN();
+    set_sprite_data(BOSS_TILE_BASE, 32, boss_tiles[art]);
+    ASSETS_OUT();
+}

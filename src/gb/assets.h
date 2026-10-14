@@ -21,10 +21,10 @@ extern const uint8_t ui_tiles[16*16];
    Bars: UI_BAR_FULL / UI_BAR_HALF, empty = UI_BAR_EMPTY. */
 enum {
     UI_BOLT = TILE_UI_BASE + 0,
-    UI_STEP = TILE_UI_BASE + 1,
-    UI_STAR = TILE_UI_BASE + 2,
+    UI_HULL = TILE_UI_BASE + 1,
+    UI_HULL_EMPTY = TILE_UI_BASE + 2,
     UI_CELL = TILE_UI_BASE + 3,
-    UI_FLAG = TILE_UI_BASE + 4,
+    UI_SHIELD = TILE_UI_BASE + 4,
     UI_BOX_TL = TILE_UI_BASE + 5,
     UI_BOX_T = TILE_UI_BASE + 6,
     UI_BOX_B = TILE_UI_BASE + 6,
@@ -41,7 +41,7 @@ enum {
 };
 
 /* ---- room art: one block of tile data loaded at TILE_ART_BASE ---- */
-#define NUM_ART_TILES 104
+#define NUM_ART_TILES 116
 extern const uint8_t art_tiles[NUM_ART_TILES*16];
 
 /* Walls are auto-tiled per 8x8 quarter: wall_tile[corner*WALL_VARIANTS + variant].
@@ -83,18 +83,19 @@ enum {
     MT_PHASE_G_OFF,
     MT_PLATE_F,
     MT_PLATE_F_ON,
-    MT_PLATE_C,
-    MT_PLATE_C_ON,
     MT_DOOR_CLOSED,
     MT_DOOR_OPEN,
-    MT_FIELD_V,
-    MT_FIELD_H,
     MT_EXIT_R,
-    MT_EXIT_U,
-    MT_EXIT_D,
-    MT_HATCH_L,
-    MT_HATCH_T,
-    MT_HATCH_B,
+    MT_ITEM_POWER,
+    MT_ITEM_SHIELD,
+    MT_ITEM_BOMB,
+    MT_ITEM_REPAIR,
+    MT_BOSS_DOOR,
+    MT_DECO_PIPE,
+    MT_DECO_PIPE_V,
+    MT_DECO_WINDOW,
+    MT_DECO_LIGHT,
+    MT_DECO_GRATE,
     NUM_MT
 };
 extern const uint8_t mt_tiles[NUM_MT*4];
@@ -107,11 +108,7 @@ extern const uint8_t mt_cgb_pal[NUM_MT];
 enum {
     ANIM_PLASMA,
     ANIM_CELL,
-    ANIM_FIELD_V,
-    ANIM_FIELD_H,
     ANIM_EXIT_R,
-    ANIM_EXIT_U,
-    ANIM_EXIT_D,
     ANIM_DOOR,
     NUM_ANIM
 };
@@ -121,13 +118,15 @@ extern const uint8_t anim_speed[NUM_ANIM];
 extern const uint8_t *const anim_data[NUM_ANIM];
 
 /* ---- sprites (8x8 OAM mode), tiles 0..127 at 0x8000 ---- */
-#define NUM_SPR_TILES 63
+#define NUM_SPR_TILES 82
 extern const uint8_t spr_tiles[NUM_SPR_TILES*16];
-/* sprite tile indices.  16x16 frames (MECH, BOT, CRATE, RING) are 4 tiles
-   TL,TR,BL,BR.  Mech frames face right with gravity down: use OAM X flip
-   for left, Y flip for gravity up.  ARROW_R: X flip = left; ARROW_U:
-   Y flip = down.  SPR_RING is the TL quarter of a 16x16 ring (draw 4 with
-   X/Y flips).  The rest are single 8x8 tiles. */
+/* sprite tile indices.  16x16 frames (MECH, BOT, CRATE, TURRET, EXPLODE)
+   are 4 tiles TL,TR,BL,BR.  Mech frames (incl. MECH_SHOOT, cannon muzzle at
+   x=15,y=7) face right with gravity down: OAM X flip for left, Y flip for
+   gravity up.  TURRET: floor-mounted (base on row 15), barrel right: X flip
+   = left, Y flip = ceiling.  SHOT / SHOT_POWER travel right (X flip = left).
+   SPR_RING is the TL quarter of a 16x16 ring (draw 4 with X/Y flips).
+   The rest are single 8x8 tiles.  Tiles BOSS_TILE_BASE..127 are boss art. */
 enum {
     SPR_MECH_IDLE = 0,
     SPR_MECH_IDLE2 = 4,
@@ -137,23 +136,39 @@ enum {
     SPR_MECH_FLIP = 20,
     SPR_MECH_LAND = 24,
     SPR_MECH_DEAD = 28,
-    SPR_BOT_A = 32,
-    SPR_BOT_B = 36,
-    SPR_BOT_WALK = 40,
-    SPR_BOT_DEAD = 44,
-    SPR_CRATE = 48,
-    SPR_SPARK_BIG = 52,
-    SPR_SPARK_SMALL = 53,
-    SPR_PIXEL = 54,
-    SPR_STREAK = 55,
-    SPR_STAR = 56,
-    SPR_ARROW_R = 57,
-    SPR_ARROW_U = 58,
-    SPR_CURSOR = 59,
-    SPR_FLIP_ICON = 60,
-    SPR_THRUST = 61,
-    SPR_RING = 62
+    SPR_MECH_SHOOT = 32,
+    SPR_BOT_A = 36,
+    SPR_BOT_B = 40,
+    SPR_BOT_WALK = 44,
+    SPR_BOT_DEAD = 48,
+    SPR_CRATE = 52,
+    SPR_SPARK_BIG = 56,
+    SPR_SPARK_SMALL = 57,
+    SPR_PIXEL = 58,
+    SPR_STREAK = 59,
+    SPR_STAR = 60,
+    SPR_CURSOR = 61,
+    SPR_RING = 62,
+    SPR_SHOT = 63,
+    SPR_SHOT_POWER = 64,
+    SPR_BOLT = 65,
+    SPR_TURRET = 66,
+    SPR_TURRET_FIRE = 70,
+    SPR_EXPLODE1 = 74,
+    SPR_EXPLODE2 = 78
 };
+
+/* ---- boss art: the game copies one boss (2 frames of 32x32 = 32 tiles) into
+   sprite tiles BOSS_TILE_BASE..127.  Frame f, tile k (4x4 row-major inside the
+   32x32 frame) is boss_tiles[b] + (f*16+k)*16.  Colours = SPAL_BOT / DMG_OBP1. */
+enum {
+    BOSS_SENTINEL,
+    BOSS_PISTON,
+    BOSS_HIVE,
+    NUM_BOSS_ART
+};
+#define BOSS_TILE_BASE 96          /* NUM_SPR_TILES <= BOSS_TILE_BASE */
+extern const uint8_t boss_tiles[NUM_BOSS_ART][32*16];
 
 /* ---- title logo: tiles load at TILE_ART_BASE; map holds ABSOLUTE indices ---- */
 #define LOGO_W 20

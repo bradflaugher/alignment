@@ -10,14 +10,16 @@
 #define SCORE_CELL 100
 #define SCORE_STAGE 1000
 #define SCORE_PERFECT 2000      /* every energy cell of a stage collected */
+#define SCORE_KILL 50           /* an enemy destroyed (stomped: double) */
+#define SCORE_BOSS 5000
 #define PAR_FRAMES_PER_COL 90   /* time bonus: par time is 1.5 s per column */
 
-enum { MODE_RUN = 0, MODE_ZEN };
+enum { MODE_CAMPAIGN = 0, MODE_ENDLESS };
 
 typedef struct {
     uint8_t mode;
     uint16_t seed;
-    uint16_t stage;         /* from 1 */
+    uint16_t stage;         /* from 1 (the campaign: the sector) */
     uint8_t lives;
     uint32_t score;
     uint16_t cells;         /* collected in the run */
@@ -31,6 +33,7 @@ typedef struct {
 void run_start(Run *r, uint8_t mode, uint16_t seed, uint16_t stage) CORE_BANKED;
 /* an energy cell: returns 1 if it gave an extra life */
 uint8_t run_cell(Run *r) CORE_BANKED;
+void run_score(Run *r, uint16_t points) CORE_BANKED;
 /* lost the mech: returns 1 if the run is over */
 uint8_t run_death(Run *r) CORE_BANKED;
 /* the exit: returns the bonus added (time + all cells) */

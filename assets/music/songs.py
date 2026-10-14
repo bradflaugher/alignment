@@ -42,6 +42,7 @@ INSTRUMENTS = [
     ("lead",     dict(env=0xB7, duty=2, vshift=8, vrate=20, vdelay=16)),          # round heroic lead
     ("leadb",    dict(env=0xB6, duty=1, vshift=8, vrate=22, vdelay=12)),          # brighter lead (25%)
     ("leadsoft", dict(env=0x86, duty=2, vshift=8, vrate=18, vdelay=18)),
+    ("leadh",    dict(env=0xC7, duty=1, alt=2, rate=5, vshift=8, vrate=26, vdelay=10)),  # hot boss lead (duty shimmer)
     ("bell",     dict(env=0x94, duty=2, alt=1, rate=8, vshift=9, vrate=14, vdelay=20)),
     ("bellsoft", dict(env=0x85, duty=2, vshift=9, vrate=12, vdelay=24)),
     ("echo",     dict(env=0x55, duty=2, vshift=8, vrate=20, vdelay=16)),
@@ -539,4 +540,239 @@ gameover = dict(
     order=dict(p1=["l"], p2=["h"], wv=["b"], no=["d"]),
 )
 
-SONGS = dict(TITLE=title, DECK_A=deck_a, DECK_B=deck_b, DECK_C=deck_c, ZEN=zen, GAMEOVER=gameover)
+# ========================================================== shared blocks ===
+# The action themes are built from one-bar blocks transposed per bar in the
+# order lists ((pattern, semitones)): a bar of 16th bass or 16th arps costs
+# ~20 bytes once and 2 bytes per use.  gen_music.py stores identical pattern
+# sources only once, even across songs, so quoting another song's pattern
+# (FINAL quotes TITLE's hook, ENDING quotes DECK_C) costs nothing either.
+# Arp blocks start with A00: the per-frame arpeggio setting outlives patterns.
+ARP_MIN = "A00 @pluck " + roll(["e4 g4 b4 e5"], UPDN) + " |"     # E minor
+ARP_MAJ = "A00 @pluck " + roll(["c4 e4 g4 c5"], UPDN) + " |"     # C major
+ARPW_MIN = "A00 @pluckw " + roll(["e4 g4 b4 e5"], UPDN) + " |"
+ARPW_MAJ = "A00 @pluckw " + roll(["c4 e4 g4 c5"], UPDN) + " |"
+BASS_DRV = "@bass " + bass("drv", "e1")          # relentless 16th octave bass on E
+BASS_PUMP = "@bassl " + bass("pump", "e1")       # 8th pump on E
+
+# chord -> semitones from the block's root (E for minor / bass, C for major)
+TR_ARP = {"Em": ("am", 0), "Am": ("am", 5), "Bm": ("am", -5), "F#m": ("am", 2),
+          "C": ("aM", 0), "D": ("aM", 2), "B": ("aM", -1), "F": ("aM", 5), "G": ("aM", 7),
+          "A": ("aM", -3), "Gl": ("aM", -5)}
+TR_BASS = {"Em": 0, "F": 1, "F#m": 2, "G": 3, "Am": 5, "B": 7, "Bm": 7, "C": 8, "D": 10}
+
+def arps(spec):
+    return [TR_ARP[c] for c in spec.split()]
+
+def basses(name, spec):
+    return [(name, TR_BASS[c] if c in TR_BASS else int(c)) for c in spec.split()]
+
+def seq(*names):
+    """drum / pattern order from space separated names"""
+    out = []
+    for n in names:
+        out += n.split()
+    return out
+
+BOSS_DRUMS = dict(
+    dI1="K.K.K.K.K.K.K.K.", dI2="K.K.K.K.SSSSmmmm",
+    dA0="C.hKS.hKK.hKS.hK", dA="K.hKS.hKKKhKS.hK", dA2="K.hKS.hKK.hKS.hh", dAf="K.hKS.hKK.SKS.SS",
+    dF="K.S.S.S.SSSSmmmm",
+    dB0="C.o.S.oKK.o.S.oK", dB="K.o.S.oKK.o.S.oK",
+    dC0="C.K.S.KKK.K.S.KK", dC="K.K.S.KKK.K.S.KK", dCr="KKKKS.KKKKKKS.SS",
+)
+D_A = "dA0 dA dA2 dA dA dA dA2 dAf"
+D_B = "dB0 dB dB dB dB0 dB dB dF"
+D_C = "dC0 dC dC dC dC dC dCr dF"
+
+# ================================================================== BOSS ===
+# "Core Guardian" - E minor (harmonic / Phrygian colours), 150 BPM.  The
+# boss theme: relentless 16th octave bass, double-kick drums, a hot shimmering
+# lead.  A: heroic call that climbs and lands on the B-major dominant;
+# A': the answer an octave-ish higher; B: long defiant notes over rolling
+# arps; C: Phrygian stomp (E-F) with chord stabs and a 16th shred run.
+BOSS_A = bars("@leadh e5:3 b4:3 e5:2 f#5:2 g5:2 a5:2 b5:2",
+              "g5:6 f#5:2 e5:8",
+              "c6:3 b5:3 g5:2 e5:2 g5:2 c6:2 e6:2",
+              "d6:6 c6:2 a5:4 f#5:4",
+              "e6:3 d6:3 b5:2 g5:2 b5:2 e6:2 g6:2",
+              "f#6:6 e6:2 b5:8",
+              "c6:3 e6:3 g6:2 e6:4 c6:4",
+              "b5:4 d#6:4 f#6:4 b6:4")
+BOSS_A2 = bars("@leadh b5:3 g5:3 e5:2 g5:2 b5:2 e6:2 b5:2",
+               "e6:6 d6:2 b5:8",
+               "e6:3 c6:3 g5:2 c6:2 e6:2 g6:2 e6:2",
+               "f#6:6 e6:2 d6:4 a5:4",
+               "e6:3 c6:3 a5:2 c6:2 e6:2 a6:4",
+               "f#6:6 d#6:2 b5:8",
+               "g6:4 e6:4 c6:4 e6:4",
+               "g6:6 f#6:2 e6:8")
+BOSS_B = bars("@lead g5:4 c6:4 e6:8",
+              "f#6:4 e6:2 d6:2 a5:8",
+              "b5:4 d6:4 f#6:6 e6:2",
+              "g6:8 e6:8",
+              "c6:3 e6:3 g6:10",
+              "a6:6 f#6:2 d6:8",
+              "d#6:4 f#6:4 b6:4 a6:4",
+              "f#6:4 d#6:4 b5:4 a5:2 f#5:2")
+BOSS_C1 = bars("@leadh e6:2 r:1 e6:1 b5:2 r:2 e6:2 f6:2 e6:2 b5:2",
+               "c6:4 a5:4 f5:4 a5:4",
+               "e6:2 r:1 e6:1 b5:2 r:2 e6:2 f6:2 g6:2 f6:2",
+               "a6:8 f6:4 c6:4")
+BOSS_C2 = bars("@leadh g6:2 f#6:1 e6:1 f#6:2 e6:1 d6:1 e6:2 d6:1 b5:1 d6:2 b5:2",
+               "c6:2 a5:1 g5:1 a5:2 g5:1 f5:1 g5:2 e5:2 f5:2 a5:2",
+               "g5:1 a5:1 b5:1 d6:1 g5:1 a5:1 b5:1 d6:1 b5:1 d6:1 e6:1 g6:1 d6:1 e6:1 g6:1 a6:1",
+               "b6:8 a6:2 g6:2 f#6:2 d#6:2")
+BOSS_C1P = "@chord A37 e4:16 | A47 f4:16 | A37 e4:16 | A47 f4:16 |"
+BOSS_C2P = "@chord A37 e4:16 | A47 f4:16 | A47 g4:16 | A47 b3:16 |"
+BOSS_RUN = "r:16 | @leadh b4:2 c5:2 d#5:2 e5:2 f#5:2 g5:2 a5:2 b5:2 |"   # B phrygian-dominant run
+
+boss = dict(
+    speed=6,
+    key="e f# g a b c d d# f",
+    chords="Em B "
+           "Em Em C D Em Em C B "
+           "Em Em C D Am B C Em "
+           "C D Bm Em C D B B "
+           "Em F Em F Em F G B",
+    patterns=dict(
+        intro_l=BOSS_RUN, a=BOSS_A, a2=BOSS_A2, b=BOSS_B, c1=BOSS_C1, c2=BOSS_C2,
+        intro_a="@chord A37 e4:16 | A47 b3:16 |", c1p=BOSS_C1P, c2p=BOSS_C2P,
+        am=ARP_MIN, aM=ARP_MAJ,
+        drv=BASS_DRV,
+        **BOSS_DRUMS),
+    order=dict(
+        p1=["intro_l", "LOOP", "a", "a2", "b", "c1", "c2"],
+        p2=["intro_a", "LOOP"] + arps("Em Em C D Em Em C B  Em Em C D Am B C Em  C D Bm Em C D B B")
+           + ["c1p", "c2p"],
+        wv=basses("drv", "Em B") + ["LOOP"] +
+           basses("drv", "Em Em C D Em Em C B  Em Em C D Am B C Em  C D Bm Em C D B B  Em F Em F Em F G B"),
+        no=seq("dI1 dI2") + ["LOOP"] + seq(D_A, D_A, D_B, D_C),
+    ),
+)
+
+# ================================================================= CLEAR ===
+# "Sector Clear" - ~5 s one-shot fanfare in E major: the bVI - bVII - I
+# heroic cadence (C - D - E) in rising arpeggios with a harmony in thirds,
+# a run up to the tonic and a shimmering E-major chord to close.
+clear = dict(
+    speed=5,
+    key="e f# g# a b c# d# c d",
+    chords="C D E",          # + a 12-row final E chord
+    patterns=dict(
+        l=bars("@leadb g5:2 c6:2 e6:2 g6:6 e6:2 g6:2",
+               "a5:2 d6:2 f#6:2 a6:6 f#6:2 a6:2",
+               "e5:2 f#5:2 g#5:2 a5:2 b5:4 c#6:2 d#6:2") + " @lead e6:12",
+        h=bars("@harm e5:2 g5:2 c6:2 e6:6 c6:2 e6:2",
+               "f#5:2 a5:2 d6:2 f#6:6 d6:2 f#6:2",
+               "b4:2 d#5:2 e5:2 f#5:2 g#5:4 a5:2 b5:2") + " @chord A47 e5:12",
+        b="@bass " + bass("gal", "c2", "d2") + " " + bass("drv", "e1") + " @bassl e1:12",
+        d="C...S.S.C.h.S.SS C...S.S.C.h.S.SS K.S.K.S.SSSSmmmm C...........",
+    ),
+    order=dict(p1=["l"], p2=["h"], wv=["b"], no=["d"]),
+)
+
+# ================================================================ ENDING ===
+# "Alignment Restored" - D major, ~120 BPM, the credits.  TITLE's D-minor
+# hook comes back in D major (the gravity finally flips the right way up),
+# then DECK_C's "Open Sky" theme is quoted note for note, a new climb soars
+# to the top of the range, and the hook returns with a warm harmony line.
+END_HOOK = bars("@lead d5:3 f#5:3 a5:2 g5:2 f#5:2 e5:2 f#5:2",
+                "d6:3 b5:3 f#5:2 g5:2 b5:2 c#6:2 d6:2",
+                "d6:3 b5:3 g5:2 b5:2 d6:2 g6:4",
+                "e6:6 d6:2 c#6:4 a5:4",
+                "d5:3 f#5:3 a5:2 g5:2 f#5:2 e5:2 f#5:2",
+                "d6:3 b5:3 f#5:2 g5:2 f#5:2 b5:2 d6:2",
+                "g6:3 f#6:3 d6:2 b5:4 g5:4",
+                "a5:3 c#6:3 e6:2 a6:8")
+END_CLIMB = bars("@leadb b5:6 a5:2 g5:4 d6:4",
+                 "c#6:6 b5:2 a5:4 e6:4",
+                 "f#6:8 e6:4 c#6:4",
+                 "d6:6 c#6:2 b5:8",
+                 "g6:6 f#6:2 d6:4 b5:4",
+                 "a6:6 g6:2 e6:4 c#6:4",
+                 "d6:4 f#6:4 a6:8",
+                 "f#6:8 e6:4 d6:4")
+END_HARM = bars("@harm f#4:8 a4:8", "b4:8 f#4:8", "g4:8 b4:8", "c#5:8 a4:8",
+                "d5:8 a4:8", "d5:8 b4:8", "b4:8 d5:8", "c#5:8 e5:8")
+TR_END = {"D": 0, "Bm": -3, "G": -7, "A": -5, "C": -2, "F#m": -8}
+
+def ebass(name, spec):
+    return [(name, TR_END[c]) for c in spec.split()]
+
+ending = dict(
+    speed=(8, 7),
+    key="d e f# g a b c# c",
+    chords="D Bm G A "
+           "D Bm G A D Bm G A "
+           "D C G D Bm G A A "
+           "G A F#m Bm G A D D "
+           "D Bm G A D Bm G A",
+    patterns=dict(
+        intro_l="r:16 | r:16 | @leadsoft d5:6 b4:2 g4:8 | a4:4 c#5:4 e5:8 |",
+        hook=END_HOOK, sky=deck_c["patterns"]["a1"], climb=END_CLIMB, harm=END_HARM,
+        am=ARPW_MIN, aM=ARPW_MAJ, sky_a=deck_c["patterns"]["a_arp"],
+        half="@bassl " + bass("half", "d2"), dot="@bassl " + bass("dot", "d2"),
+        oct="@bass " + bass("oct8", "d2"), sky_b=deck_c["patterns"]["a_b"],
+        dI="z...z...z...z...z...z...z...z.z.k...z...k...z...k...z...k.S.SSSS",
+        dA="K.h.S.h.K.hKS.h.", dA2="K.h.S.h.K.hKS.hh", dAf="K.h.S.hSK.SKS.SS",
+        sky_d=deck_c["patterns"]["a_d"],
+        dC0="C.o.S.o.K.o.S.o.", dC="K.o.S.o.K.o.S.oK", dF="K.S.S.S.SSSSmmmm",
+    ),
+    order=dict(
+        p1=["intro_l", "LOOP", "hook", "sky", "climb", "hook"],
+        p2=[("aM", 2), ("am", -5), ("aM", -5), ("aM", -3), "LOOP"] +
+           [("aM", 2), ("am", -5), ("aM", -5), ("aM", -3)] * 2 + ["sky_a"] +
+           [("aM", -5), ("aM", -3), ("am", 2), ("am", -5), ("aM", -5), ("aM", -3), ("aM", 2), ("aM", 2)] +
+           ["harm"],
+        wv=ebass("half", "D Bm G A") + ["LOOP"] + ebass("dot", "D Bm G A D Bm G A") + ["sky_b"] +
+           ebass("oct", "G A F#m Bm G A D D") + ebass("dot", "D Bm G A D Bm G A"),
+        no=["dI", "LOOP"] + seq("dA dA dA dA2 dA dA dA dAf") + ["sky_d"] +
+           seq("dC0 dC dC dC dC0 dC dC dF") + seq("dA dA dA dA2 dA dA dA dAf"),
+    ),
+)
+
+# ================================================================= FINAL ===
+# "Singularity" - the sector-8 final boss, E minor, ~164 BPM.  Develops the
+# BOSS material: a Phrygian half-time intro, BOSS's call now over thick
+# per-frame chords, TITLE's hook returning in E minor over the 16th bass,
+# a line-cliche bridge (the bass sinks E-D#-D-C# under a falling lead), and
+# BOSS's stomp section lifted a whole step before the cadence home.
+FIN_C = bars("@leadh e6:6 b5:2 g5:8",
+             "f#6:6 b5:2 d#6:8",
+             "g6:6 d6:2 b5:8",
+             "e6:6 c#6:2 g6:8",
+             "g6:4 e6:4 c6:4 e6:4",
+             "a6:4 e6:4 c6:4 a5:4",
+             "b6:4 a6:4 f#6:4 d#6:4",
+             "f#6:2 d#6:2 b5:2 a5:2 f#5:2 d#5:2 b4:4")
+FIN_CH = ("@chord A37 e4:16 | e4:16 | A47 c4:16 | A47 d4:16 | A37 e4:16 | e4:16 | A47 c4:16 | "
+          "A47 b3:14 A00 @pluck b3:1 d#4:1 |")
+
+final = dict(
+    speed=(6, 5),
+    key="e f# g a b c d d# f c#",
+    chords="Em F Em B "
+           "Em Em C D Em Em C B "
+           "Em C G D Em C Am B "
+           "Em Em/D# Em/D C#m7b5 C Am B B "
+           "F#m G F#m G Em F G B",
+    patterns=dict(
+        intro_l="r:16 | r:16 | @leadh e5:4 f5:4 e5:4 b4:4 | b4:2 c5:2 d#5:2 e5:2 f#5:2 g5:2 a5:2 b5:2 |",
+        a=BOSS_A, hook=title["patterns"]["hook"], c=FIN_C, c1=BOSS_C1, c2=BOSS_C2,
+        intro_a="@chord A37 e4:16 | A47 f4:16 | A37 e4:16 | A47 b3:16 |",
+        ch=FIN_CH, hook_a=title["patterns"]["hook_a"], c1p=BOSS_C1P, c2p=BOSS_C2P,
+        am=ARP_MIN, aM=ARP_MAJ,
+        drv=BASS_DRV, pump=BASS_PUMP,
+        dI="C.......m.......k.......m...m...C.......m.......K.K.K.K.mmmmSSSS",
+        **BOSS_DRUMS),
+    order=dict(
+        p1=["intro_l", "LOOP", "a", ("hook", 2), "c", ("c1", 2), "c2"],
+        p2=["intro_a", "LOOP", "ch", ("hook_a", 2)] + arps("Em Em Em Em C Am B B") + [("c1p", 2), "c2p"],
+        wv=basses("pump", "Em F Em B") + ["LOOP"] +
+           basses("drv", "Em Em C D Em Em C B  Em C G D Em C Am B  Em -1 -2 -3 C Am B B  F#m G F#m G Em F G B"),
+        no=["dI", "LOOP"] + seq(D_A, D_A, "dC0 dB dB dB dB0 dB dB dF", D_C),
+    ),
+)
+
+SONGS = dict(TITLE=title, DECK_A=deck_a, DECK_B=deck_b, DECK_C=deck_c, ZEN=zen, GAMEOVER=gameover,
+             BOSS=boss, CLEAR=clear, ENDING=ending, FINAL=final)

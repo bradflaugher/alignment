@@ -30,6 +30,7 @@
 #define IN_JUMP 0x04        /* held */
 #define IN_JUMP_NEW 0x08    /* just pressed */
 #define IN_FLIP_NEW 0x10    /* just pressed */
+#define IN_FIRE 0x20        /* held (the cannon repeats) */
 
 /* events of one step */
 #define EV_LAND 0x0001
@@ -42,8 +43,14 @@
 #define EV_EXIT 0x0080      /* reached the exit gate */
 #define EV_STEP 0x0100      /* a footstep (for the sound) */
 #define EV_BONK 0x0200      /* hit a ceiling while jumping */
+#define EV_ITEM 0x0400      /* picked up a power-up (ev_item, at ev_cx, ev_cy) */
+#define EV_SHOOT 0x0800     /* the cannon fired */
+#define EV_HURT 0x1000      /* the mech took a hit (and lived) */
+#define EV_KILL 0x2000      /* an enemy was destroyed (at pixel ev_kx, ev_ky) */
+#define EV_HIT 0x4000       /* an enemy was hit and lived */
+#define EV_STOMP 0x8000     /* an enemy was crushed by the mech falling onto it */
 
-enum { DIE_NONE = 0, DIE_PLASMA, DIE_DRONE, DIE_CRUSHER, DIE_LASER };
+enum { DIE_NONE = 0, DIE_PLASMA, DIE_DRONE, DIE_CRUSHER, DIE_LASER, DIE_BOLT, DIE_BOSS };
 
 typedef struct {
     uint16_t x, y;      /* 1/16 px */
@@ -58,7 +65,8 @@ typedef struct {
     uint8_t step_t;
 } Mech;
 
-extern uint8_t ev_cx, ev_cy;    /* the cell of an EV_CELL */
+extern uint8_t ev_cx, ev_cy;    /* the cell of an EV_CELL / EV_ITEM */
+extern uint8_t ev_item;         /* T_ITEM_* of an EV_ITEM */
 
 void mech_spawn(Mech *m, uint8_t cx, uint8_t cy, uint8_t g) CORE_BANKED;
 /* one frame; t is the stage clock (enemies and lasers move with it) */
@@ -68,6 +76,8 @@ uint16_t mech_step(Mech *m, Stage *S, uint8_t input, uint16_t t) CORE_BANKED;
  * *len is how far the piston reaches below its top (pixels) */
 void enemy_pos(const Enemy *e, uint16_t t, uint16_t *px, uint8_t *py, uint8_t *len) CORE_BANKED;
 uint8_t laser_on(uint16_t t) CORE_BANKED;
+/* where a turret's bolt is at time t (1) or that it has none in the air (0) */
+uint8_t turret_bolt(const Enemy *e, uint16_t t, uint16_t *bx) CORE_BANKED;
 /* solid for the mech in gravity g, at pixel (px, py) */
 uint8_t solid_px(const Stage *S, uint16_t px, uint8_t py, uint8_t g) CORE_BANKED;
 

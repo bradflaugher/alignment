@@ -15,10 +15,10 @@
 #define SND_ORD_JUMP  0xFF /* + byte offset into order list */
 #define SND_ORD_END   0xFE
 #define SND_NUM_NOTES 96
-#define SND_NUM_INSTS 20
+#define SND_NUM_INSTS 21
 #define SND_NUM_DRUMS 12
 #define SND_NUM_WAVES 2
-#define SND_NUM_PATTERNS 104
+#define SND_NUM_PATTERNS 153
 
 /* Instrument (8 bytes, ROM).
  *   pulse: env = NRx2 envelope, duty/alt = duty 0..3, rate = frames between
@@ -55,11 +55,11 @@ extern const snd_inst_t snd_insts[SND_NUM_INSTS];
 extern const snd_drum_t snd_drums[SND_NUM_DRUMS];
 extern const uint8_t snd_waves[SND_NUM_WAVES][16];
 extern const uint8_t * const snd_patterns[SND_NUM_PATTERNS];
-extern const snd_song_t snd_songs[6];
-extern const snd_sfx_t snd_sfx[23];
+extern const snd_song_t snd_songs[10];
+extern const snd_sfx_t snd_sfx[35];
 /* approximate lengths, for tests / tools */
-extern const uint16_t snd_song_frames[6]; /* intro+loop body in frames */
-extern const uint8_t snd_song_loops[6];   /* 1 = looping */
-extern const uint8_t snd_sfx_frames[23];   /* sfx duration in frames */
+extern const uint16_t snd_song_frames[10]; /* intro+loop body in frames */
+extern const uint8_t snd_song_loops[10];   /* 1 = looping */
+extern const uint8_t snd_sfx_frames[35];   /* sfx duration in frames */
 
 #endif

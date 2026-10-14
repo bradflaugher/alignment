@@ -226,10 +226,13 @@ static void fresh(void)
     reset_stats();
 }
 
-static const char *song_names[NUM_SONGS] = { "TITLE", "DECK_A", "DECK_B", "DECK_C", "ZEN", "GAMEOVER" };
+static const char *song_names[NUM_SONGS] = { "TITLE", "DECK_A", "DECK_B", "DECK_C", "ZEN", "GAMEOVER",
+    "BOSS", "CLEAR", "ENDING", "FINAL" };
 static const char *sfx_names[NUM_SFX] = { "STEP", "BUMP", "FLIP", "LAND", "PUSH", "CRATE_LAND",
     "CELL", "EXIT_OPEN", "EXIT", "ZAP", "CRUSH", "BOT_STEP", "BOT_DIE", "DOOR", "REWIND", "MENU",
-    "SELECT", "OPTIMAL", "NEWMECH", "HINT", "ERROR", "SCAN", "DECK" };
+    "SELECT", "OPTIMAL", "NEWMECH", "HINT", "ERROR", "SCAN", "DECK",
+    "SHOOT", "SHOOT_POWER", "HIT", "EXPLODE", "HURT", "ITEM", "BOMB", "BOSS_HIT", "BOSS_DIE",
+    "ALARM", "TURRET", "JUMP" };
 
 static void test_init(void)
 {
@@ -274,9 +277,15 @@ static void test_songs(void)
             if (s >= SONG_DECK_A && s <= SONG_DECK_C)
                 CHECK(snd_song_frames[s] >= 60 * 60, "%s: deck loop is long (%u frames)",
                       song_names[s], snd_song_frames[s]);
+            if (s == SONG_BOSS || s == SONG_FINAL || s == SONG_ENDING)
+                CHECK(snd_song_frames[s] >= 40 * 60, "%s: loop is at least 40 s (%u frames)",
+                      song_names[s], snd_song_frames[s]);
         } else {
             CHECK(stopped_at > 0, "%s: one-shot song stopped", song_names[s]);
             CHECK(stopped_at < 600, "%s: one-shot song short (%d frames)", song_names[s], stopped_at);
+            if (s == SONG_CLEAR)
+                CHECK(stopped_at >= 3 * 60 && stopped_at <= 5 * 60 + 10, "CLEAR: fanfare 3-5 s (%d frames)",
+                      stopped_at);
             CHECK(sound_debug_loops() == 0, "%s: one-shot did not loop", song_names[s]);
             ticks(10);                       /* wave release */
             after = w_total;
@@ -349,6 +358,25 @@ static void test_sfx(void)
     CHECK(snd_sfx_frames[SFX_SCAN] <= 6, "SCAN short (%u)", snd_sfx_frames[SFX_SCAN]);
     CHECK(snd_sfx_frames[SFX_FLIP] >= 12 && snd_sfx_frames[SFX_FLIP] <= 30, "FLIP ~0.3 s (%u)",
           snd_sfx_frames[SFX_FLIP]);
+    /* combat: the gun fires ~6x a second, so shots are tiny and stay off the lead + bass */
+    CHECK(snd_sfx_frames[SFX_SHOOT] >= 2 && snd_sfx_frames[SFX_SHOOT] <= 4, "SHOOT 2-4 frames (%u)",
+          snd_sfx_frames[SFX_SHOOT]);
+    CHECK(snd_sfx_frames[SFX_SHOOT_POWER] <= 6, "SHOOT_POWER short (%u)", snd_sfx_frames[SFX_SHOOT_POWER]);
+    CHECK((snd_sfx[SFX_SHOOT].mask & ~0x0A) == 0 && (snd_sfx[SFX_SHOOT_POWER].mask & ~0x0A) == 0,
+          "shots use pulse 2 / noise only (%02x %02x)", snd_sfx[SFX_SHOOT].mask, snd_sfx[SFX_SHOOT_POWER].mask);
+    CHECK(snd_sfx_frames[SFX_HIT] <= 5, "HIT tiny (%u)", snd_sfx_frames[SFX_HIT]);
+    CHECK(snd_sfx_frames[SFX_BOSS_HIT] <= 12, "BOSS_HIT short (%u)", snd_sfx_frames[SFX_BOSS_HIT]);
+    CHECK(snd_sfx_frames[SFX_TURRET] <= 10, "TURRET short (%u)", snd_sfx_frames[SFX_TURRET]);
+    CHECK(snd_sfx_frames[SFX_JUMP] <= 12 && snd_sfx_frames[SFX_JUMP] < snd_sfx_frames[SFX_FLIP],
+          "JUMP short, shorter than FLIP (%u)", snd_sfx_frames[SFX_JUMP]);
+    CHECK(snd_sfx_frames[SFX_EXPLODE] <= 40, "EXPLODE short (%u)", snd_sfx_frames[SFX_EXPLODE]);
+    CHECK(snd_sfx_frames[SFX_BOSS_DIE] >= 75 && snd_sfx_frames[SFX_BOSS_DIE] <= 110, "BOSS_DIE ~1.5 s (%u)",
+          snd_sfx_frames[SFX_BOSS_DIE]);
+    CHECK(snd_sfx_frames[SFX_ALARM] >= 50 && snd_sfx_frames[SFX_ALARM] <= 75, "ALARM ~1 s (%u)",
+          snd_sfx_frames[SFX_ALARM]);
+    CHECK(snd_sfx[SFX_SHOOT].prio < snd_sfx[SFX_HURT].prio && snd_sfx[SFX_SHOOT].prio < snd_sfx[SFX_BOMB].prio
+          && snd_sfx[SFX_BOSS_DIE].prio >= snd_sfx[SFX_BOMB].prio && snd_sfx[SFX_HIT].prio < snd_sfx[SFX_EXPLODE].prio,
+          "combat priorities ordered");
 }
 
 static void test_resume(void)
@@ -378,8 +406,10 @@ static void test_resume(void)
 /* important sounds are never cut by the per-turn ones */
 static void test_priorities(void)
 {
-    static const uint8_t big[] = { SFX_ZAP, SFX_CRUSH, SFX_EXIT, SFX_OPTIMAL, SFX_DECK, SFX_BOT_DIE };
-    static const uint8_t small[] = { SFX_STEP, SFX_BOT_STEP, SFX_SCAN, SFX_PUSH, SFX_BUMP, SFX_MENU };
+    static const uint8_t big[] = { SFX_ZAP, SFX_CRUSH, SFX_EXIT, SFX_OPTIMAL, SFX_DECK, SFX_BOT_DIE,
+                                   SFX_HURT, SFX_BOMB, SFX_BOSS_DIE, SFX_ALARM, SFX_ITEM };
+    static const uint8_t small[] = { SFX_STEP, SFX_BOT_STEP, SFX_SCAN, SFX_PUSH, SFX_BUMP, SFX_MENU,
+                                     SFX_SHOOT, SFX_SHOOT_POWER, SFX_HIT, SFX_TURRET, SFX_BOSS_HIT };
     unsigned b, k;
     for (b = 0; b < sizeof big; b++) {
         for (k = 0; k < sizeof small; k++) {
@@ -437,6 +467,68 @@ static void test_priorities(void)
     }
     sfx_mask_now = 0;
     check_clean("priorities");
+}
+
+/* combat: the gun fires ~6x a second over the boss theme; the shot only ever
+   borrows its own channel, lead / bass / drums keep playing, and the arps get
+   their channel back between shots.  Enemy hits / kills layer on the noise. */
+static void test_gun(void)
+{
+    int f, max_owned_frames = 0, run = 0;
+    unsigned long p2_music;
+    fresh();
+    music_play(SONG_BOSS);
+    ticks(400);
+    reset_stats();
+    sfx_mask_now = snd_sfx[SFX_SHOOT].mask | snd_sfx[SFX_SHOOT_POWER].mask;
+    for (f = 0; f < 600; f++) {
+        if (f % 10 == 0)
+            sfx_play((f / 10) % 4 == 3 ? SFX_SHOOT_POWER : SFX_SHOOT);
+        tick();
+        CHECK((sound_debug_owned() & ~sfx_mask_now) == 0, "gun: only the shot channel owned (%02x)",
+              sound_debug_owned());
+        run = (sound_debug_owned() & 2) ? run + 1 : 0;
+        if (run > max_owned_frames)
+            max_owned_frames = run;
+    }
+    CHECK(max_owned_frames <= 6, "gun: a shot holds pulse 2 at most 6 frames (%d)", max_owned_frames);
+    /* (the wave channel is never retriggered while it runs: check it is still sounding) */
+    CHECK(trig_music[0] > 20 && trig_music[3] > 20 && !wave_silent(),
+          "gun: lead/bass/drums keep playing (%lu %lu)", trig_music[0], trig_music[3]);
+    p2_music = trig_music[1];
+    CHECK(p2_music > 20, "gun: arps come back between shots (%lu)", p2_music);
+    check_clean("gun");
+    /* shots + enemy hits + kills + turret fire at once: all layered, all settle */
+    reset_stats();
+    sfx_mask_now = 0x0B;
+    for (f = 0; f < 600; f++) {
+        if (f % 10 == 0) sfx_play(SFX_SHOOT);
+        if (f % 10 == 3) sfx_play(SFX_HIT);
+        if (f % 45 == 7) sfx_play(SFX_EXPLODE);
+        if (f % 37 == 11) sfx_play(SFX_TURRET);
+        if (f % 23 == 5) sfx_play(SFX_BOSS_HIT);
+        tick();
+    }
+    CHECK(run_sfx_until_done(200) < 60, "combat spam settles");
+    CHECK(sound_debug_owned() == 0, "combat spam: channels released");
+    sfx_mask_now = 0;
+    check_clean("combat spam");
+    /* the boss dies while the player keeps shooting: the death is never cut */
+    reset_stats();
+    sfx_mask_now = 0x0B;
+    sfx_play(SFX_BOSS_DIE);
+    ticks(2);
+    for (f = 0; f < snd_sfx_frames[SFX_BOSS_DIE] - 4; f++) {
+        if (f % 10 == 0) sfx_play(SFX_SHOOT);
+        if (f % 7 == 0) sfx_play(SFX_BOSS_HIT);
+        tick();
+        CHECK((sound_debug_owned() & snd_sfx[SFX_BOSS_DIE].mask) == snd_sfx[SFX_BOSS_DIE].mask,
+              "BOSS_DIE keeps its channels (frame %d, owned %02x)", f, sound_debug_owned());
+    }
+    run_sfx_until_done(300);
+    sfx_mask_now = 0;
+    CHECK(sound_debug_owned() == 0, "boss death released");
+    check_clean("boss death");
 }
 
 static void test_stop(void)
@@ -639,6 +731,7 @@ int main(void)
     test_sfx();
     test_resume();
     test_priorities();
+    test_gun();
     test_stop();
     test_effects();
     test_stress();

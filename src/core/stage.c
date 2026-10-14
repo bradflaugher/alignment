@@ -46,6 +46,7 @@ static const uint8_t unlock_at[NUM_MECH] = {
     7,  /* M_LASER */
     8,  /* M_CRUSHER */
     2,  /* M_SHAFT */
+    9,  /* M_TURRET */
 };
 
 uint8_t stage_new_mech(uint16_t n) CORE_BANKED
@@ -106,6 +107,60 @@ static void add_enemy(uint8_t kind, uint8_t x0, uint8_t x1, uint8_t y0, uint8_t 
     e->y1 = y1;
     e->speed = speed;
     e->phase = rnd(255);
+    e->hp = enemy_hp(kind);
+}
+
+uint8_t enemy_hp(uint8_t kind) CORE_BANKED
+{
+    static const uint8_t hp[NUM_E] = { 2, 1, HP_INVULNERABLE, 3 };
+    return hp[kind];
+}
+
+void stage_rearm(Stage *st) CORE_BANKED
+{
+    uint8_t i;
+    Enemy *e = st->enemy;
+    for (i = st->nenemies; i; i--, e++) e->hp = enemy_hp(e->kind);
+}
+
+static void door_rows(Stage *st, uint8_t x, uint16_t mask, uint8_t t)
+{
+    uint8_t y;
+    uint8_t *col = &st->cell[SCELL(x, 0)];
+    for (y = 0; y < SH; y++, mask >>= 1)
+        if (mask & 1) col[y] = t;
+}
+
+void arena_reset(Stage *st) CORE_BANKED
+{
+    if (st->arena.kind == BOSS_NONE) return;
+    door_rows(st, st->arena.x0, st->arena.m0, T_DOOR_OPEN);
+    door_rows(st, st->arena.x1, st->arena.m1, T_DOOR);
+}
+
+void arena_seal(Stage *st) CORE_BANKED
+{
+    if (st->arena.kind == BOSS_NONE) return;
+    door_rows(st, st->arena.x0, st->arena.m0, T_DOOR);
+}
+
+void arena_open(Stage *st) CORE_BANKED
+{
+    if (st->arena.kind == BOSS_NONE) return;
+    door_rows(st, st->arena.x1, st->arena.m1, T_EMPTY);
+}
+
+/* a turret's bolt runs along its row until the first solid cell (at most 15 cells) */
+static uint8_t turret_reach(uint8_t x, uint8_t y, int8_t dir)
+{
+    uint8_t k;
+    for (k = 1; k < 15; k++) {
+        uint8_t xx = (uint8_t)(x + dir * k), t;
+        if (xx >= S->w) break;
+        t = S->cell[SCELL(xx, y)];
+        if (t == T_WALL || t == T_PHASE_P || t == T_PHASE_G || t == T_DOOR) break;
+    }
+    return (uint8_t)(x + dir * (k - 1));
 }
 
 /* the corridor's height, kept in 4..8 (3 in places later on) */
@@ -242,6 +297,18 @@ static void sec_laser(void)
     flat(3);
 }
 
+/* a gun turret on the floor or the ceiling, firing back down the corridor */
+static void sec_turret(void)
+{
+    uint8_t x, top = rnd(3) == 0, y;
+    flat((uint8_t)(4 + rnd(3)));
+    x = gx;
+    flat(1);
+    y = top ? (uint8_t)(gc + 1) : (uint8_t)(gf - 1);
+    add_enemy(E_TURRET, turret_reach(x, y, -1), x, y, top, 1);
+    flat(2);
+}
+
 /* phase: a wall that only one gravity lets through, or a bridge only one gravity holds */
 static void sec_phase(void)
 {
@@ -344,7 +411,7 @@ static void sec_pillars(void)
 static uint8_t pick_section(uint16_t mechs)
 {
     /* weighted choice among the unlocked kinds */
-    static const uint8_t weight[NUM_MECH] = { 5, 0, 3, 3, 3, 2, 2, 2, 3 };
+    static const uint8_t weight[NUM_MECH] = { 5, 0, 3, 3, 3, 2, 2, 2, 3, 3 };
     uint8_t total = 0, m, r;
     for (m = 0; m < NUM_MECH; m++)
         if (mechs & MBIT(m)) total = (uint8_t)(total + weight[m]);
@@ -374,16 +441,66 @@ static void build_section(uint8_t m, uint16_t *used)
     case M_LASER: sec_laser(); break;
     case M_CRUSHER: sec_crusher(); break;
     case M_SHAFT: sec_shaft(); break;
+    case M_TURRET: sec_turret(); break;
     case 0xFE: sec_pillars(); break;
     case 0xFD: sec_islands(); break;
     default: sec_steps(); break;
     }
 }
 
+/* every fourth stage ends in a boss arena: a tall closed room between two blast doors */
+#define ARENA_TOP 2
+#define ARENA_BOT 13
+#define ARENA_W 12
+static void build_arena(uint16_t n)
+{
+    Arena *a = &S->arena;
+    uint8_t k = (uint8_t)(((n >> 2) - 1) & 3), y;
+    flat(2);
+    /* ease the corridor to a 4-row opening at rows 9..12 (the arena's floor is row 13) */
+    while (gf != ARENA_BOT || gc != ARENA_BOT - 5) {
+        if (gf < ARENA_BOT) gf++;
+        else if (gf > ARENA_BOT) gf--;
+        if (gc < ARENA_BOT - 5 && gc + 1 < gf - 4) gc++;
+        else if (gc > ARENA_BOT - 5) gc--;
+        flat(1);
+    }
+    flat(1);
+    a->kind = (uint8_t)(BK_SENTINEL + k);
+    a->level = (uint8_t)(n >= 16 ? 2 : 1);
+    a->top = ARENA_TOP;
+    a->bot = ARENA_BOT;
+    a->x0 = gx;
+    a->m0 = a->m1 = 0;
+    put_col(gx, gc, gf);
+    for (y = (uint8_t)(gc + 1); y < gf; y++) {
+        set(gx, y, T_DOOR_OPEN);
+        a->m0 |= (uint16_t)1 << y;
+    }
+    gx++;
+    gc = ARENA_TOP;
+    gf = ARENA_BOT;
+    flat(ARENA_W);
+    a->x1 = gx;
+    put_col(gx, gc, gf);
+    for (y = (uint8_t)(gc + 1); y < gf; y++) {
+        set(gx, y, T_DOOR);
+        a->m1 |= (uint16_t)1 << y;
+    }
+    gx++;
+    /* where the boss starts */
+    switch (a->kind) {
+    case BK_PISTON: a->bx = (uint8_t)(a->x0 + ARENA_W / 2); a->by = ARENA_TOP + 1; break;
+    case BK_HIVE: a->bx = (uint8_t)(a->x0 + ARENA_W / 2); a->by = ARENA_TOP + 3; break;
+    default: a->bx = (uint8_t)(a->x1 - 3); a->by = ARENA_BOT - 2; break;
+    }
+    flat(2);
+}
+
 static void build(uint16_t seed, uint16_t n)
 {
     uint16_t un = 0, used = 0;
-    uint8_t m, feat, half_done = 0, y;
+    uint8_t m, feat, half_done = 0, y, boss;
     rng_seed2(seed, n);
     memset(S->cell, T_WALL, sizeof(S->cell));
     S->nenemies = 0;
@@ -411,7 +528,10 @@ static void build(uint16_t seed, uint16_t n)
         flat(3);
         build_section(feat, &used);
     }
-    while (gx < S->w - 30) {     /* (a section is at most ~26 columns) */
+    S->sector = 0;
+    memset(&S->arena, 0, sizeof(S->arena));
+    boss = (uint8_t)((n & 3) == 0);
+    while (gx < S->w - (boss ? 52 : 30)) {     /* (a section is at most ~26 columns) */
         if (!half_done && gx >= S->w / 2) {
             /* the checkpoint: a quiet spot halfway */
             half_done = 1;
@@ -424,6 +544,7 @@ static void build(uint16_t seed, uint16_t n)
         }
         build_section(pick_section(un), &used);
     }
+    if (boss) build_arena(n);
     /* the end: a platform and the exit gate across the corridor */
     flat((uint8_t)(S->w - 3 - gx));
     S->exit_x = gx;
@@ -439,6 +560,16 @@ static void build(uint16_t seed, uint16_t n)
     }
     nsec = sec;
     S->mechs = used;
+    /* enemies left to right (turrets reach back past ones placed before them) */
+    {
+        uint8_t i, j;
+        for (i = 1; i < S->nenemies; i++) {
+            Enemy e;
+            e = S->enemy[i];
+            for (j = i; j > 0 && S->enemy[j - 1].x0 > e.x0; j--) S->enemy[j] = S->enemy[j - 1];
+            S->enemy[j] = e;
+        }
+    }
 }
 
 /* energy cells on spots the mech can reach: mostly the far side of the corridor */
