@@ -14,6 +14,13 @@
 #define ALONG(v) (gd > 0 ? (int16_t)(v) : (int16_t)-(v))       /* v * gd */
 
 uint8_t ev_cx, ev_cy, ev_item;
+#ifdef __SDCC
+#include <gb/gb.h>
+uint8_t dbg_m[8];
+#define MK(k) (dbg_m[k] = LY_REG)
+#else
+#define MK(k)
+#endif
 
 void mech_spawn(Mech *m, uint8_t cx, uint8_t cy, uint8_t g) CORE_BANKED
 {
@@ -55,7 +62,10 @@ static const uint8_t solid_tab[2][NUM_T] = {
     /* up   */ { 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 };
 typedef char solid_tab_covers_terrain[NUM_T == 21 ? 1 : -1];
-static const uint8_t *solid_g;      /* solid_tab[the gravity of this step] */
+static const uint8_t *solid_g;
+/* hazards (1 plasma, 2 laser) and things to touch (cells, gates, power-ups), by terrain */
+static const uint8_t haz_tab[NUM_T] = { 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+static const uint8_t touch_tab[NUM_T] = { 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0 };      /* solid_tab[the gravity of this step] */
 #define SOLID_C(px, py) (solid_g[cell_t((px), (py))])
 
 /* does the hitbox with its top-left at pixel (hx, hy) touch anything solid? */
@@ -83,68 +93,9 @@ uint8_t laser_on(uint16_t t) CORE_BANKED
     return (uint8_t)(((t >> 3) & 15) < 9);        /* on 72 frames, off 56 */
 }
 
-#include "mul8.h"
 
-/* a triangle wave on an 8-bit phase: 0..len..0 every 256 steps (no division) */
-static uint16_t tri(uint8_t ph, uint8_t len)
-{
-    uint8_t t = ph < 128 ? ph : (uint8_t)(255 - ph);
-    return (uint16_t)(mul8(t, len) >> 7);
-}
 
-void enemy_pos(const Enemy *e, uint16_t t, uint16_t *px, uint8_t *py, uint8_t *len) CORE_BANKED
-{
-    uint16_t tt = (uint16_t)(t + ((uint16_t)e->phase << 2));
-    uint8_t ct, ph, range;
-    /* tt * speed (1..3) */
-    if (e->speed == 2) tt <<= 1;
-    else if (e->speed == 3) tt = (uint16_t)(tt + (tt << 1));
-    ph = (uint8_t)(tt >> 1);
-    *len = 0;
-    *px = (uint16_t)e->x0 << 4;
-    *py = (uint8_t)(e->y0 << 4);
-    switch (e->kind) {
-    case E_CRAWLER:
-        *px += tri(ph, (uint8_t)((e->x1 - e->x0) << 4));
-        break;
-    case E_HOVER:
-        *py = (uint8_t)(*py + tri(ph, (uint8_t)((e->y1 - e->y0) << 4)));
-        break;
-    case E_TURRET:
-        if (e->speed) *px = (uint16_t)e->x1 << 4;
-        break;
-    default: /* E_CRUSHER: rest, slam, hold, pull back up */
-        range = (uint8_t)((e->y1 - e->y0) << 4);
-        ct = (uint8_t)(tt & 127);
-        if (ct < 60) *len = 0;
-        else if (ct < 68) *len = (uint8_t)(mul8(range, (uint8_t)(ct - 60)) >> 3);
-        else if (ct < 92) *len = range;
-        else {
-            uint16_t v = mul8(range, (uint8_t)(127 - ct));
-            *len = (uint8_t)((uint16_t)((v << 3) - v) >> 8);
-        }
-        break;
-    }
-}
 
-uint8_t turret_bolt(const Enemy *e, uint16_t t, uint16_t *bx) CORE_BANKED
-{
-    /* a bolt every 128 frames, 2 px a frame, after 8 frames of charging */
-    uint8_t age = (uint8_t)((uint8_t)(t + (uint16_t)(e->phase << 2)) & 127);
-    uint16_t x, travel;
-    if (!e->hp || age < 8) return 0;
-    travel = (uint16_t)((uint8_t)(age - 8) << 1);
-    if (e->speed) {
-        x = (uint16_t)(((uint16_t)e->x1 << 4) - 4);
-        if (travel > x || (uint16_t)(x - travel) < ((uint16_t)e->x0 << 4)) return 0;
-        *bx = (uint16_t)(x - travel);
-    } else {
-        x = (uint16_t)(((uint16_t)e->x0 << 4) + 12);
-        *bx = (uint16_t)(x + travel);
-        if (*bx + 8 > ((uint16_t)(e->x1 + 1) << 4)) return 0;
-    }
-    return 1;
-}
 
 
 uint16_t mech_step(Mech *m, Stage *S, uint8_t in, uint16_t t) CORE_BANKED
@@ -209,11 +160,13 @@ uint16_t mech_step(Mech *m, Stage *S, uint8_t in, uint16_t t) CORE_BANKED
         }
     }
 
+    MK(0);
     /* ---- gravity ---- */
     m->vy += ALONG(GRAV);
     if (m->vy > FALL_MAX) m->vy = FALL_MAX;
     if (m->vy < -FALL_MAX) m->vy = -FALL_MAX;
 
+    MK(1);
     /* ---- move: x, then y ---- */
     nx = (uint16_t)(m->x + m->vx);
     px = (uint16_t)(nx >> 4);
@@ -229,6 +182,7 @@ uint16_t mech_step(Mech *m, Stage *S, uint8_t in, uint16_t t) CORE_BANKED
     } else {
         m->x = nx;
     }
+    MK(2);
     px = (uint16_t)(m->x >> 4);
     py = (uint8_t)(m->y >> 4);
     /* standing: if the ground is still there, stay on it (no sub-pixel creeping) */
@@ -267,6 +221,7 @@ uint16_t mech_step(Mech *m, Stage *S, uint8_t in, uint16_t t) CORE_BANKED
         if (m->coyote) m->coyote--;
     }
 moved:
+    MK(3);
     px = (uint16_t)(m->x >> 4);
     py = (uint8_t)(m->y >> 4);
     /* still standing? (walking off a ledge) */
@@ -284,43 +239,51 @@ moved:
         }
     }
 
+    MK(4);
     /* ---- things it touches: each corner's cell is read once ---- */
     hx = (uint16_t)(px + HB_X);
     hy = (uint8_t)(py + HB_Y);
     {
         /* hazards get a slightly smaller box: brushing past is fine */
-        uint8_t a = cell_t((uint16_t)(hx + 1), (uint8_t)(hy + 2));
-        uint8_t b = cell_t((uint16_t)(hx + HB_W - 2), (uint8_t)(hy + 2));
-        uint8_t c = cell_t((uint16_t)(hx + 1), (uint8_t)(hy + HB_H - 3));
-        uint8_t d = cell_t((uint16_t)(hx + HB_W - 2), (uint8_t)(hy + HB_H - 3));
-        if (a == T_PLASMA || b == T_PLASMA || c == T_PLASMA || d == T_PLASMA) m->dead = DIE_PLASMA;
-        else if ((a == T_LASER || b == T_LASER || c == T_LASER || d == T_LASER) && laser_on(t)) m->dead = DIE_LASER;
+        uint8_t h = (uint8_t)(haz_tab[cell_t((uint16_t)(hx + 1), (uint8_t)(hy + 2))] |
+                              haz_tab[cell_t((uint16_t)(hx + HB_W - 2), (uint8_t)(hy + 2))] |
+                              haz_tab[cell_t((uint16_t)(hx + 1), (uint8_t)(hy + HB_H - 3))] |
+                              haz_tab[cell_t((uint16_t)(hx + HB_W - 2), (uint8_t)(hy + HB_H - 3))]);
+        if (h & 1) m->dead = DIE_PLASMA;
+        else if ((h & 2) && laser_on(t)) m->dead = DIE_LASER;
     }
+    MK(5);
     if (!m->dead) {
         /* pickups and gates under the hitbox's corners (one pickup a frame) */
-        uint8_t k, t, cx, cy;
-        for (k = 0; k < 4; k++) {
-            cx = (uint8_t)(((k & 1) ? (uint16_t)(hx + HB_W - 1) : hx) >> 4);
-            cy = (uint8_t)(((k & 2) ? (uint8_t)(hy + HB_H - 1) : hy) >> 4);
-            if (cx >= cw) continue;
-            t = cells[SCELL(cx, cy)];
-            if (t < T_CELL) continue;
-            if (t == T_CELL || T_IS_ITEM(t)) {
-                S->cell[SCELL(cx, cy)] = T_EMPTY;
-                ev_cx = cx;
-                ev_cy = cy;
-                if (t == T_CELL) {
-                    ev |= EV_CELL;
-                } else {
-                    ev_item = t;
-                    ev |= EV_ITEM;
+        uint16_t rx = (uint16_t)(hx + HB_W - 1);
+        uint8_t by = (uint8_t)(hy + HB_H - 1);
+        if (touch_tab[cell_t(hx, hy)] | touch_tab[cell_t(rx, hy)] | touch_tab[cell_t(hx, by)] |
+            touch_tab[cell_t(rx, by)]) {
+            uint8_t k, t, cx, cy;
+            for (k = 0; k < 4; k++) {
+                cx = (uint8_t)(((k & 1) ? rx : hx) >> 4);
+                cy = (uint8_t)(((k & 2) ? by : hy) >> 4);
+                if (cx >= cw) continue;
+                t = cells[SCELL(cx, cy)];
+                if (t < T_CELL) continue;
+                if (t == T_CELL || T_IS_ITEM(t)) {
+                    S->cell[SCELL(cx, cy)] = T_EMPTY;
+                    ev_cx = cx;
+                    ev_cy = cy;
+                    if (t == T_CELL) {
+                        ev |= EV_CELL;
+                    } else {
+                        ev_item = t;
+                        ev |= EV_ITEM;
+                    }
+                    break;
                 }
-                break;
+                if (t == T_CHECK) ev |= EV_CHECK;
+                else if (t == T_EXIT) ev |= EV_EXIT;
             }
-            if (t == T_CHECK) ev |= EV_CHECK;
-            else if (t == T_EXIT) ev |= EV_EXIT;
         }
     }
+    MK(6);
     if (m->dead) return (uint16_t)((ev & ~EV_EXIT) | EV_DEAD);
     return ev;
 }

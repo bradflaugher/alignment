@@ -72,12 +72,7 @@ void mech_spawn(Mech *m, uint8_t cx, uint8_t cy, uint8_t g) CORE_BANKED;
 /* one frame; t is the stage clock (enemies and lasers move with it) */
 uint16_t mech_step(Mech *m, Stage *S, uint8_t input, uint16_t t) CORE_BANKED;
 
-/* where an enemy is at time t: top-left of its 16x16 box, in pixels; for a crusher
- * *len is how far the piston reaches below its top (pixels) */
-void enemy_pos(const Enemy *e, uint16_t t, uint16_t *px, uint8_t *py, uint8_t *len) CORE_BANKED;
 uint8_t laser_on(uint16_t t) CORE_BANKED;
-/* where a turret's bolt is at time t (1) or that it has none in the air (0) */
-uint8_t turret_bolt(const Enemy *e, uint16_t t, uint16_t *bx) CORE_BANKED;
 /* solid for the mech in gravity g, at pixel (px, py) */
 uint8_t solid_px(const Stage *S, uint16_t px, uint8_t py, uint8_t g) CORE_BANKED;
 

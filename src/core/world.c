@@ -57,6 +57,76 @@ void player_spawn(Player *p, uint8_t cx, uint8_t cy) CORE_BANKED
     p->cd = 0;
 }
 
+/* ---------------------------------------------------------------- enemies */
+
+/* a triangle wave on an 8-bit phase: 0..len..0 every 256 steps (no division) */
+static uint16_t tri(uint8_t ph, uint8_t len)
+{
+    uint8_t t = ph < 128 ? ph : (uint8_t)(255 - ph);
+    return (uint16_t)(mul8(t, len) >> 7);
+}
+
+/* where an enemy is at time t (here, in the world step's bank: it runs for every
+ * enemy near the mech every frame, and a call to another bank costs) */
+static void enemy_pos(const Enemy *e, uint16_t t, uint16_t *px, uint8_t *py, uint8_t *len)
+{
+    uint16_t tt = (uint16_t)(t + ((uint16_t)e->phase << 2));
+    uint8_t ct, ph, range;
+    /* tt * speed (1..3) */
+    if (e->speed == 2) tt <<= 1;
+    else if (e->speed == 3) tt = (uint16_t)(tt + (tt << 1));
+    ph = (uint8_t)(tt >> 1);
+    *len = 0;
+    *px = (uint16_t)e->x0 << 4;
+    *py = (uint8_t)(e->y0 << 4);
+    switch (e->kind) {
+    case E_CRAWLER:
+        *px += tri(ph, (uint8_t)((e->x1 - e->x0) << 4));
+        break;
+    case E_HOVER:
+        *py = (uint8_t)(*py + tri(ph, (uint8_t)((e->y1 - e->y0) << 4)));
+        break;
+    case E_TURRET:
+        if (e->speed) *px = (uint16_t)e->x1 << 4;
+        break;
+    default: /* E_CRUSHER: rest, slam, hold, pull back up */
+        range = (uint8_t)((e->y1 - e->y0) << 4);
+        ct = (uint8_t)(tt & 127);
+        if (ct < 60) *len = 0;
+        else if (ct < 68) *len = (uint8_t)(mul8(range, (uint8_t)(ct - 60)) >> 3);
+        else if (ct < 92) *len = range;
+        else {
+            uint16_t v = mul8(range, (uint8_t)(127 - ct));
+            *len = (uint8_t)((uint16_t)((v << 3) - v) >> 8);
+        }
+        break;
+    }
+}
+
+static uint8_t bolt_at(const Enemy *e, uint16_t t, uint16_t *bx)
+{
+    /* a bolt every 128 frames, 2 px a frame, after 8 frames of charging */
+    uint8_t age = (uint8_t)((uint8_t)(t + (uint16_t)(e->phase << 2)) & 127);
+    uint16_t x, travel;
+    if (!e->hp || age < 8) return 0;
+    travel = (uint16_t)((uint8_t)(age - 8) << 1);
+    if (e->speed) {
+        x = (uint16_t)(((uint16_t)e->x1 << 4) - 4);
+        if (travel > x || (uint16_t)(x - travel) < ((uint16_t)e->x0 << 4)) return 0;
+        *bx = (uint16_t)(x - travel);
+    } else {
+        x = (uint16_t)(((uint16_t)e->x0 << 4) + 12);
+        *bx = (uint16_t)(x + travel);
+        if (*bx + 8 > ((uint16_t)(e->x1 + 1) << 4)) return 0;
+    }
+    return 1;
+}
+
+uint8_t turret_bolt(const Enemy *e, uint16_t t, uint16_t *bx) CORE_BANKED
+{
+    return bolt_at(e, t, bx);
+}
+
 /* ---------------------------------------------------------------- damage */
 
 static uint16_t hurt(uint8_t why)
@@ -406,9 +476,13 @@ static uint16_t boss_frame(void)
             b->life = 0;
             continue;
         }
-        if (hits_mech((uint16_t)(b->x + 2), (uint8_t)(b->y + 2), 4, 4)) {
-            b->life = 0;
-            ev |= hurt(DIE_BOLT);
+        {
+            uint16_t x = (uint16_t)(b->x + 2);
+            uint8_t y = (uint8_t)(b->y + 2);
+            if (mx < (uint16_t)(x + 4) && x < (uint16_t)(mx + MW) && my < (uint8_t)(y + 4) && y < (uint8_t)(my + MH)) {
+                b->life = 0;
+                ev |= hurt(DIE_BOLT);
+            }
         }
     }
     /* touching it */
@@ -538,7 +612,7 @@ static uint16_t touch(uint16_t t)
         Enemy *e = &S->enemy[q->i];
         if (!e->hp) continue;
         /* a turret's bolt */
-        if (q->kind == E_TURRET && turret_bolt(e, t, &bx)) {
+        if (q->kind == E_TURRET && bolt_at(e, t, &bx)) {
             bx += 2;
             if (mx < (uint16_t)(bx + 4) && bx < (uint16_t)(mx + MW) && my < (uint8_t)(q->y + 10) &&
                 (uint8_t)(q->y + 6) < (uint8_t)(my + MH))

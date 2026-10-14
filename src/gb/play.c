@@ -364,20 +364,26 @@ static void draw_mech(void)
 
 static void draw_shots(void)
 {
-    uint8_t i;
+    uint8_t i, oy;
+    uint16_t ox;
     OAM_item_t *o = &shadow_OAM[SP_SHOT];
     const Shot *s = player.shot;
+    uint16_t cx = (uint16_t)(cam_x + shake_x - 8);
+    uint8_t cy = (uint8_t)(cam_y + shake_y - 16);
+    uint8_t tile = player.power ? SPR_SHOT_POWER : SPR_SHOT;
+    uint8_t pal = mech.g ? SPAL_SPARK_G : SPAL_SPARK_P;
     for (i = 0; i < NSHOT; i++, s++, o++) {
-        int16_t sx = (int16_t)(s->x - cam_x);
-        int16_t sy = (int16_t)s->y - (int16_t)cam_y;
-        if (!s->life || sx < -8 || sx > 160 || sy < -8 || sy > 144) {
+        /* (unsigned: anything off screen wraps past the limits) */
+        ox = (uint16_t)(s->x - cx);
+        oy = (uint8_t)(s->y - cy);
+        if (!s->life || ox >= 168 || oy >= 160) {
             o->y = 0;
             continue;
         }
-        o->y = (uint8_t)(sy + 16 - shake_y);
-        o->x = (uint8_t)(sx + 8 - shake_x);
-        o->tile = player.power ? SPR_SHOT_POWER : SPR_SHOT;
-        o->prop = (uint8_t)((mech.g ? SPAL_SPARK_G : SPAL_SPARK_P) | (s->vx < 0 ? S_FLIPX : 0));
+        o->y = oy;
+        o->x = (uint8_t)ox;
+        o->tile = tile;
+        o->prop = (uint8_t)(pal | (s->vx < 0 ? S_FLIPX : 0));
     }
 }
 
@@ -714,8 +720,11 @@ static void stage_begin(void)
 static void land_fx(void)
 {
     uint8_t y = mech.g ? (uint8_t)(mech_py()) : (uint8_t)(mech_py() + 15);
-    part_spawn((uint16_t)(mech_px() + 4), y, -6, mech.g ? 2 : -2, SPR_PIXEL, SPAL_WHITE, 12);
-    part_spawn((uint16_t)(mech_px() + 11), y, 6, mech.g ? 2 : -2, SPR_PIXEL, SPAL_WHITE, 12);
+    /* (dust only for real landings on a DMG: hops are free) */
+    if (is_cgb || mech.land_v >= 12) {
+        part_spawn((uint16_t)(mech_px() + 4), y, -6, mech.g ? 2 : -2, SPR_PIXEL, SPAL_WHITE, 12);
+        part_spawn((uint16_t)(mech_px() + 11), y, 6, mech.g ? 2 : -2, SPR_PIXEL, SPAL_WHITE, 12);
+    }
     if (mech.land_v >= 12) {
         fx_shake(mech.land_v >= 16 ? 2 : 1);
         sfx_play(SFX_LAND);

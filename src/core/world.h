@@ -86,6 +86,8 @@ extern uint16_t ev_kx;      /* the centre of the enemy of an EV_KILL / EV_HIT, p
 extern uint8_t ev_ky;
 
 void player_spawn(Player *p, uint8_t cx, uint8_t cy) CORE_BANKED;
+/* where a turret's bolt is at time t (1), or that it has none in the air (0) */
+uint8_t turret_bolt(const Enemy *e, uint16_t t, uint16_t *bx) CORE_BANKED;
 /* the boss of the stage's arena, waiting (also after the mech is lost) */
 void boss_reset(Boss *b, Stage *S) CORE_BANKED;
 /* one frame of everything: returns EV_* (and sets ev2) */
