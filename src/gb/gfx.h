@@ -22,6 +22,7 @@ void gfx_init(void);
 void gfx_load_play_tiles(void);
 void gfx_load_title_tiles(void);
 void gfx_hide_sprites(void);
+void gfx_draw_logo(uint8_t y0);
 void input_poll(void);
 void wait_frames(uint8_t n);
 

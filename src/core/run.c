@@ -1,6 +1,9 @@
+#ifdef __SDCC
+#pragma bank 255
+#endif
 #include "run.h"
 
-void run_start(Run *r, uint8_t mode, uint16_t seed, uint16_t room)
+void run_start(Run *r, uint8_t mode, uint16_t seed, uint16_t room) CORE_BANKED
 {
     r->mode = mode;
     r->seed = seed;
@@ -14,7 +17,7 @@ void run_start(Run *r, uint8_t mode, uint16_t seed, uint16_t room)
     r->over = 0;
 }
 
-uint8_t run_on_move(Run *r)
+uint8_t run_on_move(Run *r) CORE_BANKED
 {
     if (r->moves < 255) r->moves++;
     if (r->mode != MODE_RUN) return 0;
@@ -22,25 +25,25 @@ uint8_t run_on_move(Run *r)
     return 0;
 }
 
-uint8_t run_is_over(const Run *r)
+uint8_t run_is_over(const Run *r) CORE_BANKED
 {
     return (uint8_t)(r->mode == MODE_RUN && r->energy == 0);
 }
 
-uint8_t run_grade(uint8_t moves, uint8_t par)
+uint8_t run_grade(uint8_t moves, uint8_t par) CORE_BANKED
 {
     if (moves <= par) return GRADE_BEST;
     if (moves <= (uint8_t)(par + 2)) return GRADE_GOOD;
     return GRADE_OK;
 }
 
-uint8_t run_best_bonus(uint8_t streak)
+uint8_t run_best_bonus(uint8_t streak) CORE_BANKED
 {
     uint8_t extra = (uint8_t)(streak / RUN_STREAK_STEP);
     return (uint8_t)(RUN_BEST_BONUS + (extra < RUN_STREAK_MAX ? extra : RUN_STREAK_MAX));
 }
 
-uint8_t run_on_win(Run *r, uint8_t par)
+uint8_t run_on_win(Run *r, uint8_t par) CORE_BANKED
 {
     uint8_t gain = 0;
     uint16_t e;
@@ -68,7 +71,7 @@ uint8_t run_on_win(Run *r, uint8_t par)
     return gain;
 }
 
-uint8_t run_try_hint(Run *r)
+uint8_t run_try_hint(Run *r) CORE_BANKED
 {
     if (r->mode != MODE_RUN) return 1;
     if (r->energy <= RUN_HINT_COST) return 0;
@@ -77,7 +80,7 @@ uint8_t run_try_hint(Run *r)
     return 1;
 }
 
-uint8_t run_skip(Run *r)
+uint8_t run_skip(Run *r) CORE_BANKED
 {
     if (r->mode != MODE_ZEN) return 0;
     r->room++;

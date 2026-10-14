@@ -33,6 +33,7 @@ static uint8_t shake_amt;
 static uint8_t flash_t, flash_white;
 static volatile uint8_t pal_dirty;
 static uint8_t rnd_s = 0x5A;
+static uint8_t a_on;            /* tile animations run (room art loaded) */
 
 /* ------------------------------------------------------------ VBlank */
 
@@ -73,20 +74,29 @@ void wait_frames(uint8_t n)
 
 /* ------------------------------------------------------------ tiles */
 
+static void set_vram_tile(uint8_t i, const uint8_t *src);
+
+/* Big loads happen with the LCD off (title / room art); small ones (animation frames,
+ * always tiles >= 128) go through set_sprite_data: tiles 128-255 are shared by sprites
+ * and the BG, and that routine waits for VRAM to be free. */
 void bg_tile_data(uint8_t first, uint8_t n, const uint8_t *src)
 {
     uint8_t k;
-    /* split at 128: low indices live at 0x9000, high ones at 0x8800 */
-    if (first < 128) {
-        k = (uint8_t)(128 - first);
-        if (k > n) k = n;
-        set_data((uint8_t *)(0x9000u + ((uint16_t)first << 4)), src, (uint16_t)k << 4);
-        src += (uint16_t)k << 4;
-        n -= k;
-        first = 128;
+    if (first >= 128) {
+        set_sprite_data(first, n, src);
+        return;
     }
-    if (n)
-        set_data((uint8_t *)(0x8800u + ((uint16_t)(first - 128) << 4)), src, (uint16_t)n << 4);
+    k = (uint8_t)(128 - first);
+    if (k > n) k = n;
+    if (LCDC_REG & LCDCF_ON) {
+        /* (never happens with the LCD on in practice; keep it safe anyway) */
+        uint8_t i;
+        for (i = 0; i < k; i++)
+            set_vram_tile(first + i, src + ((uint16_t)i << 4));
+    } else {
+        memcpy((uint8_t *)(0x9000u + ((uint16_t)first << 4)), src, (uint16_t)k << 4);
+    }
+    if (n > k) set_sprite_data(128, (uint8_t)(n - k), src + ((uint16_t)k << 4));
 }
 
 static void load_common(void)
@@ -103,10 +113,20 @@ static void load_common(void)
     ASSETS_OUT();
 }
 
+static void set_vram_tile(uint8_t i, const uint8_t *src)
+{
+    uint8_t *d = (uint8_t *)(0x9000u + ((uint16_t)i << 4));
+    uint8_t j;
+    for (j = 0; j < 16; j++) set_vram_byte(d + j, src[j]);
+}
+
+/* both called with the screen faded to black: the LCD goes off for the copy */
 void gfx_load_play_tiles(void)
 {
     ASSETS_IN();
+    DISPLAY_OFF;
     bg_tile_data(TILE_ART_BASE, NUM_ART_TILES, art_tiles);
+    DISPLAY_ON;
     ASSETS_OUT();
     anim_reset();
 }
@@ -114,7 +134,20 @@ void gfx_load_play_tiles(void)
 void gfx_load_title_tiles(void)
 {
     ASSETS_IN();
+    a_on = 0;
+    DISPLAY_OFF;
     bg_tile_data(TILE_ART_BASE, LOGO_NTILES, logo_tiles);
+    DISPLAY_ON;
+    ASSETS_OUT();
+}
+
+/* bank 0: it maps the art bank in, which banked code must never do */
+void gfx_draw_logo(uint8_t y0)
+{
+    uint8_t y;
+    ASSETS_IN();
+    for (y = 0; y < LOGO_H; y++)
+        put_block(0, (uint8_t)(y0 + y), LOGO_W, 1, logo_map + y * LOGO_W, logo_cgb_attr + y * LOGO_W);
     ASSETS_OUT();
 }
 
@@ -450,12 +483,14 @@ void anim_reset(void)
         a_first[i] = mt_tiles[anim_mt[i] * 4];
     }
     ASSETS_OUT();
+    a_on = 1;
 }
 
 void anim_update(void)
 {
     /* every timer runs; at most one animation is copied per frame (64 bytes) */
     uint8_t i, n, done = 0;
+    if (!a_on) return;
     for (i = 0; i < NUM_ANIM; i++)
         if (a_timer[i] < 255) a_timer[i]++;
     for (n = 0; n < NUM_ANIM && !done; n++) {

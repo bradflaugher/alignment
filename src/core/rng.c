@@ -1,3 +1,6 @@
+#ifdef __SDCC
+#pragma bank 255
+#endif
 #include "rng.h"
 
 /* Marsaglia xorshift on two 16-bit words, triple (5,3,1): 32 bits of state, period
@@ -7,13 +10,13 @@
 uint16_t rng_state = 1;   /* y: the last output */
 static uint16_t rng_x;
 
-void rng_seed(uint16_t seed)
+void rng_seed(uint16_t seed) CORE_BANKED
 {
     rng_x = 0;
     rng_state = seed ? seed : 0xACE1u;
 }
 
-uint16_t rng_next(void)
+uint16_t rng_next(void) CORE_BANKED
 {
     uint16_t t = (uint16_t)(rng_x ^ (uint16_t)(rng_x << 5));
     rng_x = rng_state;
@@ -21,7 +24,7 @@ uint16_t rng_next(void)
     return rng_state;
 }
 
-uint8_t rng_range(uint8_t n)
+uint8_t rng_range(uint8_t n) CORE_BANKED
 {
     /* multiply-high on the top byte: avoids division, bias is negligible for gameplay */
     uint16_t r = (uint16_t)(rng_next() >> 8);
@@ -52,7 +55,7 @@ static void feistel(uint16_t a, uint16_t b)
  * of its own, well mixed. The one pair that maps to all-zero (a state xorshift can't
  * leave) takes the state of (a, 0) instead: sector 0 is never played, so no pair the
  * game uses shares it. */
-void rng_seed2(uint16_t a, uint16_t b)
+void rng_seed2(uint16_t a, uint16_t b) CORE_BANKED
 {
     feistel(a, b);
     if (!rng_x && !rng_state) feistel(a, 0);

@@ -127,6 +127,18 @@ int main(int argc, char **argv)
         printf("%u %s\n", R.par, sol);
         return 0;
     }
+    if (!strcmp(argv[1], "dump")) {
+        /* machine-readable: par exit g0 entry, then the 90 cells, crates, drones */
+        uint8_t i;
+        gen_chain((uint16_t)strtoul(argv[2], 0, 0), (uint16_t)atoi(argv[3]), &R, &d);
+        printf("%u %u %u %u %u %u", R.par, R.exit, R.g0, R.entry, R.npicks, R.flips);
+        for (i = 0; i < RN; i++) printf(" %u", R.cell[i]);
+        printf(" %u %u %u %u\n", R.crate0[0], R.crate0[1], R.bot0[0], R.bot0[1]);
+        state_start(&R, &s);
+        solution(&R, sol);
+        printf("%s\n", sol);
+        return 0;
+    }
     if (!strcmp(argv[1], "route")) {
         Door cur, nx;
         uint16_t i, n = (uint16_t)atoi(argv[3]);
