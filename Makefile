@@ -6,6 +6,8 @@ PYTHON    ?= python3
 BUILD     := build
 OBJ       := $(BUILD)/obj
 ROM       := $(BUILD)/alignment.gb
+# shown on the title screen; CI passes the same date it tags the release with
+BUILD_DATE ?= $(shell date -u +%Y.%m.%d)
 
 CORE_SRC  := src/core/stage.c src/core/phys.c src/core/world.c src/core/levels.c src/core/rng.c src/core/run.c
 CORE_HDR  := $(wildcard src/core/*.h)
@@ -17,7 +19,7 @@ HOST_CFLAGS := -std=c99 -O2 -Wall -Wextra -Werror
 # MBC5 + RAM + battery (0x1B), 4 x 8 KB SRAM banks (bank 0 = save, bank 1 = the stage
 # checker's work area, banks 2-3 = the stage's prebuilt tile map), CGB-enhanced, ROM
 # banks packed automatically
-CFLAGS_GB  := -Isrc/core -Isrc/gb
+CFLAGS_GB  := -Isrc/core -Isrc/gb -I$(BUILD)
 # the hot core gets the slow, thorough register allocator
 CFLAGS_CORE := $(CFLAGS_GB) -Wf--max-allocs-per-node50000 -Wf--opt-code-speed
 LDFLAGS_GB := -Wm-yt0x1B -Wm-ya4 -Wm-yc -Wm-yn"ALIGNMENT" -Wm-yoA -autobank -Wl-j -Wm-yS
@@ -27,7 +29,9 @@ GB_OBJS := $(patsubst src/core/%.c,$(OBJ)/core_%.o,$(CORE_SRC)) \
            $(OBJ)/assets.o $(OBJ)/music_data.o \
            $(patsubst src/gb/%.s,$(OBJ)/%_s.o,$(GB_ASM))
 
-.PHONY: all rom assets music test test-host test-assets test-rom screenshots maps stats clean
+FORCE:
+
+.PHONY: FORCE all rom assets music test test-host test-assets test-rom screenshots maps stats clean
 
 all: rom
 
@@ -58,6 +62,12 @@ $(OBJ)/%.o: src/gb/%.c $(CORE_HDR) $(GB_HDR) src/gb/assets.h src/gb/music_data.h
 
 $(OBJ)/%_s.o: src/gb/%.s | $(OBJ)
 	$(LCC) -c -o $@ $<
+
+# rewritten only when the date changes, so a rebuild on the same day relinks nothing
+$(BUILD)/version.h: FORCE | $(BUILD)
+	@echo '#define BUILD_DATE "$(BUILD_DATE)"' | cmp -s - $@ || echo '#define BUILD_DATE "$(BUILD_DATE)"' > $@
+
+$(OBJ)/game.o: $(BUILD)/version.h
 
 $(ROM): $(GB_OBJS) | $(BUILD)
 	$(LCC) $(LDFLAGS_GB) -o $@ $(GB_OBJS)

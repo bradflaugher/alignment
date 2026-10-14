@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# a newer push to the same branch or PR supersedes the run in progress
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+
 env:
   GBDK_VERSION: "4.3.0"
   GBDK_SHA256: "5032e4e4edcef3f0ed232c895bbd211973963329304ff2c030ea34d0b2d964a4"
@@ -16,6 +21,7 @@ jobs:
   test:
     name: Build ROM + test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -38,9 +44,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
 
       - name: Install PyBoy (headless Game Boy emulator for ROM tests)
         run: pip install pyboy pillow numpy
+
+      - name: Generated sources match their inputs (art, music, levels)
+        run: |
+          python3 tools/gen_assets.py
+          python3 tools/gen_music.py
+          python3 tools/gen_levels.py
+          git diff --exit-code -- src || {
+            echo "::error::Generated sources are stale: run make assets / gen_music / gen_levels and commit"
+            exit 1
+          }
 
       - name: Host tests (stage generator, physics bot, sound engine)
         run: make test-host
@@ -54,13 +72,16 @@ jobs:
           echo "BUILD_DATE=$(date -u +%Y.%m.%d)" >> "$GITHUB_ENV"
           mkdir -p build
           date -u +%Y.%m.%d > build/build-date.txt
-          make rom
+          make rom BUILD_DATE="$(cat build/build-date.txt)"
 
-      - name: Emulator tests (DMG + CGB: the bot's button presses clear the same stages, no dropped frames)
+      - name: "Emulator tests (DMG + CGB): every sector played with the bot's inputs, frame budget checked"
         run: make test-rom
 
-      - name: Screenshots
+      - name: Screenshots and sector maps
         run: make screenshots
+
+      - name: Stage generator statistics
+        run: build/msgen stats 50 60 | tail -n 3
 
       - name: Upload ROM and screenshots
         uses: actions/upload-artifact@v4
@@ -71,12 +92,17 @@ jobs:
             build/alignment.sym
             build/build-date.txt
             build/screens/*.png
+            docs/screens/*.png
+            docs/screens/*.gif
+          if-no-files-found: error
+          retention-days: 30
 
   release:
     name: Release (date-stamped, latest only)
     needs: test
     if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     concurrency:
@@ -113,6 +139,10 @@ jobs:
           Copy \`alignment-${TAG}.gb\` to your EverDrive SD card, see
           [docs/EVERDRIVE.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/EVERDRIVE.md).
           Runs on DMG, Pocket, Color, and GBC-compatible handhelds (colour + double speed on CGB).
+          The title screen shows the build date, so you can tell which build is on the cart.
+
+          **Controls:** A jump, B fire, Up+A flip gravity, Start pause.
+          \`alignment.sym\` is the symbol file for emulator debuggers (BGB, Emulicious, SameBoy).
           NOTES
 
           if gh release view "$TAG" >/dev/null 2>&1; then
