@@ -128,7 +128,19 @@ static void tq_write(void)
 {
     uint8_t b = CURRENT_BANK;
     SWITCH_ROM(BANK(assets));
-    memcpy(tq_dst[tq_head], tq_src[tq_head], 64);
+    {
+        /* 4 tiles; BG tiles 127 and 128 aren't next to each other in VRAM (0x97F0 /
+         * 0x8800), so a run of 4 across them is copied in two parts */
+        uint8_t *d = tq_dst[tq_head];
+        const uint8_t *src = tq_src[tq_head];
+        if (d >= (uint8_t *)0x97D0u && d < (uint8_t *)0x9800u) {
+            uint8_t n = (uint8_t)(0x9800u - (uint16_t)d);
+            memcpy(d, src, n);
+            memcpy((uint8_t *)0x8800u, src + n, (uint8_t)(64 - n));
+        } else {
+            memcpy(d, src, 64);
+        }
+    }
     SWITCH_ROM(b);
     tq_head = (uint8_t)((tq_head + 1) & (TQ - 1));
     tq_n--;
