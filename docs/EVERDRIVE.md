@@ -3,12 +3,12 @@
 This guide is for an **EverDrive GB X-series** cart (X3 / X5 / X7) in any Game Boy,
 Game Boy Color, or GBC-compatible handheld such as the **ModRetro Chromatic**.
 
-The ROM is a standard **MBC5 + RAM + battery** cartridge image (64 KB ROM, 32 KB save RAM).
+The ROM is a standard **MBC5 + RAM + battery** cartridge image (128 KB ROM, 32 KB save RAM).
 It works on original grey Game Boys and runs in full colour and double speed on Color hardware.
 
 ## 1. Get the ROM
 
-1. Open the repository's **Releases** page. There is only ever one release; its tag is the build date (e.g. `2026.09.27`).
+1. Open the repository's **Releases** page. There is only ever one release; its tag is the build date (e.g. `2026.10.14`). The title screen shows the same date (`26.10.14`) in its bottom-left corner, so you can always tell which build is on your cart.
 2. Download `alignment-YYYY.MM.DD.gb`.
 
    (You can ignore the `.sym` file. It holds debug symbols for emulators.)

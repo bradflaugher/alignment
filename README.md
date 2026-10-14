@@ -97,6 +97,19 @@ in `assets/levels/`.
 The game saves your progress through the campaign, the best score and the best endless
 stage in battery-backed RAM.
 
+## Builds and releases
+
+GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push
+and pull request: it checks the generated art, music and level sources match their
+inputs, runs the host tests (physics bot on every sector, 1800 generated stages, sound
+engine), builds the ROM, plays every sector in PyBoy on DMG and CGB with the bot's
+inputs, renders the screenshots and uploads the ROM, symbols and screens as an artifact.
+
+When `main` goes green, the release job publishes the ROM as a release tagged with the
+build date (`2026.10.14`, the same date shown in the title screen's corner) and deletes
+every older release, so the **latest release is always the current build**. A second
+build on the same day replaces that day's files in place.
+
 ## Layout
 
 | Path | |

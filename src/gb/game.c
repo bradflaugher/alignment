@@ -7,6 +7,7 @@
 #include "play.h"
 #include "sound.h"
 #include "save.h"
+#include "version.h"   /* generated into build/ by the Makefile: BUILD_DATE */
 
 BANKREF_EXTERN(assets)
 
@@ -62,6 +63,7 @@ static void title_screen_draw(void)
         txt_num(0, 4, 16, (uint16_t)(save.best_score / 100u), 5, PAL_GREEN);
         txt(0, 9, 16, "00", PAL_GREEN);
     }
+    txt(0, 1, 17, BUILD_DATE + 2, PAL_DIM);
 }
 
 static uint8_t sel_sector;

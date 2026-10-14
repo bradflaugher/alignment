@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # keep the workflow's actions current (checkout, cache, setup-python, artifacts)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
