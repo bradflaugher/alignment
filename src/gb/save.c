@@ -3,7 +3,7 @@
 #include <string.h>
 #include "save.h"
 
-#define SAVE_VERSION 1
+#define SAVE_VERSION 2
 /* The save lives in cartridge RAM bank 0 (bank 1 is the solver's work area).
  * Two copies of the save: the primary (where v1 has always lived, so existing
  * saves still load) and a backup written right after it. A write torn by a
@@ -53,7 +53,7 @@ void save_load(void) BANKED
     save.magic[1] = 'L';
     save.version = SAVE_VERSION;
     save.zen_seed = 0;   /* chosen on first zen start */
-    gen_first_door(&save.zen_door);
+    save.zen_stage = 1;
     save_write();
 }
 

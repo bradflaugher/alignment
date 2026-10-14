@@ -1,7 +1,7 @@
 #ifndef IB_RNG_H
 #define IB_RNG_H
 #include <stdint.h>
-#include "room.h"   /* CORE_BANKED */
+#include "stage.h"  /* CORE_BANKED */
 /* 32-bit xorshift over two 16-bit words. Deterministic across SDCC and gcc. */
 extern uint16_t rng_state;
 void rng_seed(uint16_t seed) CORE_BANKED;

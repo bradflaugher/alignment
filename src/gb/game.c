@@ -5,7 +5,6 @@
 #include "gfx.h"
 #include "assets.h"
 #include "play.h"
-#include "bgjob.h"
 #include "sound.h"
 #include "save.h"
 
@@ -47,11 +46,9 @@ static void title_screen_draw(void)
     gfx_load_title_tiles();
     gfx_draw_logo(1);
     txt(0, 2, 8, "GRAVITY  STATION", PAL_UI);
-    if (save.run_best_room) {
-        txt(0, 1, 16, "BEST ROOM", PAL_DIM);
-        txt_num(0, 11, 16, save.run_best_room, 3, PAL_GREEN);
-        put_tile(0, 15, 16, UI_STAR, PAL_GREEN);
-        txt_num(0, 16, 16, save.total_opt, 3, PAL_UI);
+    if (save.best_stage) {
+        txt(0, 1, 16, "BEST STAGE", PAL_DIM);
+        txt_num(0, 12, 16, save.best_stage, 3, PAL_GREEN);
     }
 }
 
@@ -135,25 +132,34 @@ static void game_over(void)
     fade_to(4);
     HIDE_WIN;
     scroll_x = scroll_y = 0;
+    cam_x = 0;
+    cam_y = 0;
     clear_bkg();
-    fade_to(0);
     music_play(SONG_GAMEOVER);
-    txt(0, 4, 3, "RUN COMPLETE", PAL_HAZARD);
-    txt(0, 3, 6, "ROOMS", PAL_DIM);
-    txt_num(0, 13, 6, run.cleared, 4, PAL_UI);
-    txt(0, 3, 8, "OPTIMAL", PAL_DIM);
-    txt_num(0, 13, 8, run.bests, 4, PAL_GREEN);
-    txt(0, 3, 10, "BEST STREAK", PAL_DIM);
-    txt_num(0, 13, 10, run.best_streak, 4, PAL_UI);
+    txt(0, 5, 3, "GAME OVER", PAL_HAZARD);
+    txt(0, 3, 6, "STAGE", PAL_DIM);
+    txt_num(0, 13, 6, run.stage, 4, PAL_UI);
+    txt(0, 3, 8, "SCORE", PAL_DIM);
+    {
+        /* up to 9 999 999 */
+        uint32_t sc = run.score;
+        txt_num(0, 10, 8, (uint16_t)(sc / 1000u), 4, PAL_GREEN);
+        txt_num(0, 14, 8, (uint16_t)(sc % 1000u), 3, PAL_GREEN);
+    }
+    txt(0, 3, 10, "CELLS", PAL_DIM);
+    txt_num(0, 13, 10, run.cells, 4, PAL_UI);
     txt(0, 3, 12, "SEED", PAL_DIM);
     txt_hex(0, 13, 12, run.seed, PAL_PURPLE);
-    if (run.room >= save.run_best_room) txt(0, 3, 14, "NEW RECORD!", PAL_GREEN);
+    if (run.stage >= save.best_stage && run.score >= save.best_score) txt(0, 4, 14, "NEW RECORD!", PAL_GREEN);
+    if (run.stage > save.best_stage) save.best_stage = run.stage;
+    if (run.score > save.best_score) save.best_score = run.score;
     save_write();
+    fade_to(0);
     for (t = 0; ; t++) {
         wait_vbl_done();
         input_poll();
         fx_update();
-        if ((t & 31) == 0) part_burst((uint8_t)(20 + fx_rand() % 120), (uint8_t)(20 + fx_rand() % 100), 6, SPR_STAR, SPAL_SPARK_P, 12, 0);
+        if ((t & 31) == 0) part_burst((uint16_t)(20 + fx_rand() % 120), (uint8_t)(20 + fx_rand() % 100), 6, SPR_STAR, SPAL_SPARK_P, 12, 0);
         if (t > 60 && (joy_new & (J_A | J_START | J_B))) break;
     }
     fade_to(4);
@@ -163,10 +169,10 @@ void game_main(void) BANKED
 {
     uint8_t m;
     uint16_t seed = 0;
-    Door d;
     save_load();
-    bg_init();
     for (;;) {
+        cam_x = 0;
+        cam_y = 0;
         m = title();
         if (m == 2) {
             seed = seed_from_time();
@@ -182,16 +188,14 @@ void game_main(void) BANKED
             /* ZEN: the station walk resumes where it was left */
             if (!save.zen_seed) {
                 save.zen_seed = seed_from_time() | 1;
-                gen_first_door(&save.zen_door);
+                save.zen_stage = 1;
                 save_write();
             }
-            run_start(&run, MODE_ZEN, save.zen_seed, save.zen_door.index);
-            memcpy(&d, &save.zen_door, sizeof(Door));
+            run_start(&run, MODE_ZEN, save.zen_seed, save.zen_stage);
         } else {
             run_start(&run, MODE_RUN, seed, 1);
-            gen_first_door(&d);
         }
-        if (play_run(&d) == PLAY_OVER) game_over();
+        if (play_run() == PLAY_OVER) game_over();
         else fade_to(4);
     }
 }

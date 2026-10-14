@@ -1,48 +1,44 @@
-/* ALIGNMENT - playing: input, the turn animation, rewind, hints, the HUD, the pause
- * menu, the station map and the scroll from one room to the next. */
+/* ALIGNMENT - playing a stage: input, physics, the camera and the streaming map,
+ * enemies, effects, the HUD, death and the checkpoint, the stage card and the tally. */
 #pragma bank 255
 #include <gb/gb.h>
 #include <string.h>
 #include "gfx.h"
 #include "render.h"
 #include "play.h"
-#include "bgjob.h"
 #include "sound.h"
 #include "save.h"
-#include "../core/room.h"
-#include "../core/gen.h"
+#include "assets.h"
+#include "../core/stage.h"
+#include "../core/phys.h"
 
 Run run;
-uint8_t play_idle;
-uint16_t scan_frames;               /* frames spent waiting for the generator (tests) */                 /* waiting for input (the ROM tests watch it) */
-int16_t map_rx[MAP_N], map_ry[MAP_N];
-uint8_t map_n, map_head;
+Stage stage;                /* (globals: the ROM tests read them) */
+Mech mech;
+uint16_t stage_t;           /* the stage clock: enemies and lasers run on it */
+uint8_t play_state;         /* PS_*: what the game is doing */
+uint16_t play_lag;          /* frames the loop missed (the ROM tests check it stays 0) */
+uint8_t play_ly;            /* the scanline the last frame's work ended on (tests) */
+static uint8_t last_frame;
+uint8_t dbg_ly[8];
+uint8_t dbg_f[8];           /* frame counter at the same points */
+uint8_t dbg_q[4];          /* scanline after each part of the frame (profiling) */
 
-#define HIST_N 64
-Room room;              /* (global: the ROM tests read them) */
-Door door;
-State st;
-static State hist[HIST_N];
-static uint8_t hist_top, hist_n;
-static TurnLog lg;
+enum { PS_CARD = 0, PS_PLAY, PS_DEAD, PS_CLEAR, PS_PAUSE };
 
-/* what is drawn: object pixel positions inside the room (int16: they leave it) */
-static int16_t dpx[NOBJ], dpy[NOBJ];
-static uint8_t dvis[NOBJ];          /* sprite shown */
-static uint8_t dmove[NOBJ];         /* moving this frame (walk / fall frames) */
-static uint8_t crate_spr;           /* crates drawn as sprites (bit per crate) */
-static uint8_t facing;              /* 1 = left */
-static uint8_t vis_g;               /* the gravity the sprites are drawn for */
-static uint8_t mech_pose;           /* 0 idle, 1 walk, 2 fall, 3 flip, 4 land, 5 dead */
-static uint8_t pose_t;
-static uint8_t room_x8, room_y8;    /* the room's origin in map pixels */
-static uint8_t hint_shown, hint_act;
-static uint8_t queued;              /* buffered action, 0xFF none */
-static uint8_t rewinding;
+static uint8_t spawn_x, spawn_y;    /* respawn cell */
+static uint8_t checked;             /* the checkpoint has been reached */
+static uint8_t col_lo, col_hi;      /* stage columns currently in the BG ring */
+static uint8_t pose, pose_t;        /* mech animation */
+static uint8_t hud_cells, hud_lives, hud_bar, hud_g;
+static uint8_t laser_was;
+static uint8_t hud_msg_t;           /* a message is up in the HUD for this many frames */
+static uint8_t mech_hidden;
+static uint8_t demo_jheld;       /* (demo input: B held at the end of the last move) */
 
 #define POSE_IDLE 0
-#define POSE_WALK 1
-#define POSE_FALL 2
+#define POSE_RUN 1
+#define POSE_AIR 2
 #define POSE_FLIP 3
 #define POSE_LAND 4
 #define POSE_DEAD 5
@@ -50,892 +46,666 @@ static uint8_t rewinding;
 static const char *const deck_names[8] = {
     "HANGAR", "REACTOR", "FOUNDRY", "CRYO", "ARRAY", "SPINE", "VAULT", "CORE"
 };
+static const char *const mech_names[NUM_MECH] = {
+    "PLASMA PITS", "PLASMA", "STAGGERED PITS", "CRAWLER DRONES", "PHASE BLOCKS",
+    "HOVER DRONES", "LASER GATES", "CRUSHERS", "SHAFTS"
+};
 
-/* ------------------------------------------------------------------ sprites */
+/* ------------------------------------------------------------------ helpers */
 
-static void spr16(uint8_t slot, int16_t px, int16_t py, uint8_t tile, uint8_t fx, uint8_t fy, uint8_t prop)
+static uint16_t mech_px(void) { return (uint16_t)(mech.x >> 4); }
+static uint8_t mech_py(void) { return (uint8_t)(mech.y >> 4); }
+
+static void spr16(uint8_t slot, int16_t sx, int16_t sy, uint8_t tile, uint8_t fx, uint8_t fy, uint8_t prop)
 {
-    uint8_t q, col, row, sc, sr;
-    int16_t sx = (int16_t)(uint8_t)(room_x8 - scroll_x) + px - shake_x;
-    int16_t sy = (int16_t)(uint8_t)(room_y8 - scroll_y) + py - shake_y;
-    /* the room origin difference wraps mod 256: bring it into -96..159 */
-    if (sx > 200) sx -= 256;
-    if (sy > 200) sy -= 256;
-    if (sx < -16 || sx >= 168 || sy < -16 || sy >= 160) {
-        for (q = 0; q < 4; q++) move_sprite((uint8_t)(slot + q), 0, 0);
+    /* straight into the shadow OAM: four 8x8 sprites, mirrored as needed */
+    OAM_item_t *o = &shadow_OAM[slot];
+    uint8_t x0, x1, y0, y1, t0, t1, t2, t3;
+    if (sx < -15 || sx > 167 || sy < -15 || sy > 151) {
+        o[0].y = o[1].y = o[2].y = o[3].y = 0;
         return;
     }
     if (fx) prop |= S_FLIPX;
     if (fy) prop |= S_FLIPY;
-    for (q = 0; q < 4; q++) {
-        col = (uint8_t)(q & 1);
-        row = (uint8_t)(q >> 1);
-        sc = fx ? (uint8_t)(1 - col) : col;
-        sr = fy ? (uint8_t)(1 - row) : row;
-        set_sprite_tile((uint8_t)(slot + q), (uint8_t)(tile + sr * 2 + sc));
-        set_sprite_prop((uint8_t)(slot + q), prop);
-        move_sprite((uint8_t)(slot + q), (uint8_t)(sx + col * 8 + 8), (uint8_t)(sy + row * 8 + 16));
-    }
+    x0 = (uint8_t)(sx + 8);
+    x1 = (uint8_t)(sx + 16);
+    y0 = (uint8_t)(sy + 16);
+    y1 = (uint8_t)(sy + 24);
+    /* tiles TL TR BL BR, swapped by the flips */
+    t0 = tile; t1 = (uint8_t)(tile + 1); t2 = (uint8_t)(tile + 2); t3 = (uint8_t)(tile + 3);
+    if (fx) { uint8_t k = t0; t0 = t1; t1 = k; k = t2; t2 = t3; t3 = k; }
+    if (fy) { uint8_t k = t0; t0 = t2; t2 = k; k = t1; t1 = t3; t3 = k; }
+    o->y = y0; o->x = x0; o->tile = t0; o->prop = prop; o++;
+    o->y = y0; o->x = x1; o->tile = t1; o->prop = prop; o++;
+    o->y = y1; o->x = x0; o->tile = t2; o->prop = prop; o++;
+    o->y = y1; o->x = x1; o->tile = t3; o->prop = prop;
 }
 
-static void spr_hide4(uint8_t slot)
+static void hide4(uint8_t slot)
 {
-    uint8_t q;
-    for (q = 0; q < 4; q++) move_sprite((uint8_t)(slot + q), 0, 0);
-}
-
-static void draw_objects(void)
-{
-    uint8_t i, tile, fy = vis_g == G_UP;
-    /* the mech */
-    if (dvis[0]) {
-        switch (mech_pose) {
-        case POSE_WALK: tile = (pose_t & 4) ? SPR_MECH_WALK2 : SPR_MECH_WALK1; break;
-        case POSE_FALL: tile = SPR_MECH_FALL; break;
-        case POSE_FLIP: tile = SPR_MECH_FLIP; break;
-        case POSE_LAND: tile = SPR_MECH_LAND; break;
-        case POSE_DEAD: tile = SPR_MECH_DEAD; break;
-        default: tile = ((frame >> 5) & 1) ? SPR_MECH_IDLE2 : SPR_MECH_IDLE; break;
-        }
-        spr16(SP_MECH, dpx[0], dpy[0], tile, facing, fy,
-              mech_pose == POSE_DEAD ? SPAL_DEAD : (vis_g == G_DOWN ? SPAL_MECH_P : SPAL_MECH_G));
-    } else {
-        spr_hide4(SP_MECH);
-    }
-    /* crates moving as sprites */
-    for (i = 0; i < MAX_CRATES; i++) {
-        if (dvis[SLOT_CRATE + i] && (crate_spr & (1u << i)))
-            spr16((uint8_t)(SP_CRATE + i * 4), dpx[SLOT_CRATE + i], dpy[SLOT_CRATE + i], SPR_CRATE, 0, 0, SPAL_CRATE);
-        else
-            spr_hide4((uint8_t)(SP_CRATE + i * 4));
-    }
-    /* drones */
-    for (i = 0; i < MAX_BOTS; i++) {
-        uint8_t k = (uint8_t)(SLOT_BOT + i);
-        if (!dvis[k]) {
-            spr_hide4((uint8_t)(SP_BOT + i * 4));
-            continue;
-        }
-        tile = dmove[k] ? SPR_BOT_WALK : (((frame + i * 24) >> 4) & 1) ? SPR_BOT_B : SPR_BOT_A;
-        spr16((uint8_t)(SP_BOT + i * 4), dpx[k], dpy[k], tile, (uint8_t)(dpx[k] > dpx[0]), fy,
-              SPAL_BOT | S_PALETTE);
-    }
-    /* the hint */
-    if (hint_shown) {
-        int16_t hx = dpx[0] + 4, hy = dpy[0] + (vis_g == G_DOWN ? -10 : 18);
-        uint8_t t = SPR_ARROW_R, p = SPAL_WHITE;
-        if (hint_act == ACT_L) { hx = dpx[0] - 8; hy = dpy[0] + 4; p |= S_FLIPX; }
-        else if (hint_act == ACT_R) { hx = dpx[0] + 16; hy = dpy[0] + 4; }
-        else t = SPR_FLIP_ICON;
-        if ((frame >> 3) & 1) hx += (hint_act == ACT_L) ? -1 : (hint_act == ACT_R) ? 1 : 0;
-        set_sprite_tile(SP_HINT, t);
-        set_sprite_prop(SP_HINT, p);
-        move_sprite(SP_HINT, (uint8_t)((uint8_t)(room_x8 - scroll_x) + hx + 8),
-                    (uint8_t)((uint8_t)(room_y8 - scroll_y) + hy + 16));
-    } else {
-        move_sprite(SP_HINT, 0, 0);
-    }
-}
-
-static void place_all(const State *s)
-{
-    uint8_t i;
-    for (i = 0; i < NOBJ; i++) {
-        dvis[i] = (uint8_t)(s->o[i] != NONE);
-        dmove[i] = 0;
-        if (s->o[i]) {
-            dpx[i] = (int16_t)(CX(s->o[i]) * 16);
-            dpy[i] = (int16_t)(CY(s->o[i]) * 16);
-        }
-    }
-    crate_spr = 0;
-    render_hide = 0;
-    vis_g = s->g;
-}
-
-/* ------------------------------------------------------------------ frame */
-
-static void tick(void)
-{
-    draw_objects();
-    wait_vbl_done();
-    input_poll();
-    fx_update();
-    if (pose_t < 255) pose_t++;
-    bg_run();
-    /* buffer one action while something animates */
-    if (joy_new & J_LEFT) queued = ACT_L;
-    else if (joy_new & J_RIGHT) queued = ACT_R;
-    else if (joy_new & J_A) queued = ACT_FLIP;
-}
-
-static void ticks(uint8_t n)
-{
-    while (n--) tick();
+    OAM_item_t *o = &shadow_OAM[slot];
+    o[0].y = o[1].y = o[2].y = o[3].y = 0;
 }
 
 /* ------------------------------------------------------------------ HUD */
 
-static void hud_draw(void)
+static void hud_full(void)
 {
-    uint8_t x = 0, i;
     gfill(1, 0, 0, 20, 1, TILE_BLANK, PAL_UI);
-    put_tile(1, x++, 0, st.g == G_DOWN ? UI_GRAV_DOWN : UI_GRAV_UP, st.g == G_DOWN ? PAL_PURPLE : PAL_GREEN);
-    txt(1, x++, 0, "R", PAL_UI);
-    txt_num(1, x, 0, room.index > 999 ? 999 : room.index, 3, PAL_UI);
-    x += 4;
-    if (run.mode == MODE_RUN) {
-        put_tile(1, x++, 0, UI_BOLT, PAL_UI);
-        txt_num(1, x, 0, run.energy, 2, run.energy < 10 ? PAL_HAZARD : PAL_UI);
-    } else {
-        txt(1, x, 0, "ZEN", PAL_GREEN);
-        x++;
+    txt(1, 1, 0, "S", PAL_DIM);
+    txt_num(1, 2, 0, run.stage > 99 ? 99 : run.stage, 2, PAL_UI);
+    put_tile(1, 5, 0, UI_BOLT, PAL_GREEN);
+    put_tile(1, 9, 0, UI_CELL, PAL_GREEN);
+    txt(1, 12, 0, "/", PAL_DIM);
+    txt_num(1, 13, 0, stage.ncells, 2, PAL_DIM);
+    hud_cells = hud_lives = hud_bar = hud_g = 0xFF;
+}
+
+static void hud_update(void)
+{
+    /* one item per frame at most: each is a few STAT-safe VRAM writes */
+    uint8_t b, i, t;
+    if (hud_g != mech.g) {
+        hud_g = mech.g;
+        put_tile(1, 0, 0, mech.g ? UI_GRAV_UP : UI_GRAV_DOWN, mech.g ? PAL_GREEN : PAL_PURPLE);
+        return;
     }
-    x += 3;
-    if (room.npicks) {
-        for (i = 0; i < room.npicks; i++)
-            put_tile(1, x++, 0, UI_CELL, (st.got & (1u << i)) ? PAL_GREEN : PAL_DIM);
+    if (hud_lives != run.lives) {
+        hud_lives = run.lives;
+        if (run.mode == MODE_ZEN) txt(1, 6, 0, "ZN", PAL_GREEN);
+        else txt_num(1, 6, 0, run.lives, 2, run.lives <= 1 ? PAL_HAZARD : PAL_UI);
+        return;
     }
-    x = 15;
-    txt_num(1, x, 0, run.moves > 99 ? 99 : run.moves, 2, run.moves > room.par ? PAL_PURPLE : PAL_UI);
-    txt(1, 17, 0, "/", PAL_DIM);
-    txt_num(1, 18, 0, room.par, 2, PAL_GREEN);
+    if (hud_cells != run.stage_cells) {
+        hud_cells = run.stage_cells;
+        txt_num(1, 10, 0, run.stage_cells, 2, run.stage_cells >= stage.ncells ? PAL_GREEN : PAL_UI);
+        return;
+    }
+    if (frame & 7) return;
+    /* progress through the stage: 4 tiles, half steps */
+    b = (uint8_t)(((uint16_t)(mech_px() >> 4) * 8) / stage.w);
+    if (b != hud_bar) {
+        uint8_t row[4], pal[4];
+        hud_bar = b;
+        for (i = 0; i < 4; i++) {
+            t = b >= (uint8_t)(i * 2 + 2) ? UI_BAR_FULL : b == (uint8_t)(i * 2 + 1) ? UI_BAR_HALF : UI_BAR_EMPTY;
+            row[i] = t;
+            pal[i] = PAL_PURPLE;
+        }
+        if (is_cgb) {
+            VBK_REG = 1;
+            set_win_tiles(16, 0, 4, 1, pal);
+            VBK_REG = 0;
+        }
+        set_win_tiles(16, 0, 4, 1, row);
+    }
 }
 
 static void hud_msg(const char *s, uint8_t pal)
 {
     gfill(1, 0, 0, 20, 1, TILE_BLANK, pal);
     txt(1, (uint8_t)((20 - strlen(s)) / 2), 0, s, pal);
+    hud_cells = hud_lives = hud_bar = hud_g = 0xFF;
 }
 
-/* ------------------------------------------------------------------ history */
+/* ------------------------------------------------------------------ camera & map */
 
-static void hist_push(const State *s)
+static uint16_t cam_target_x(void)
 {
-    memcpy(&hist[hist_top], s, sizeof(State));
-    hist_top = (uint8_t)((hist_top + 1) % HIST_N);
-    if (hist_n < HIST_N) hist_n++;
+    int16_t x = (int16_t)mech_px() - 72 + (mech.facing ? -12 : 12);
+    int16_t maxx = (int16_t)((uint16_t)stage.w * 16 - 160);
+    if (x < 0) x = 0;
+    if (x > maxx) x = maxx;
+    return (uint16_t)x;
 }
 
-static uint8_t hist_pop(State *s)
+static uint8_t cam_target_y(void)
 {
-    if (!hist_n) return 0;
-    hist_top = (uint8_t)((hist_top + HIST_N - 1) % HIST_N);
-    hist_n--;
-    memcpy(s, &hist[hist_top], sizeof(State));
-    return 1;
+    int16_t y = (int16_t)mech_py() - 60;
+    if (y < 0) y = 0;
+    if (y > SH * 16 - 136) y = SH * 16 - 136;
+    return (uint8_t)y;
 }
 
-/* redraw what can differ between two states of this room */
-static void redraw_diff(const State *a, const State *b)
+/* keep the columns around the camera in the 16-column ring */
+static void stream(void)
 {
-    uint8_t i;
-    for (i = 0; i < MAX_CRATES; i++) {
-        if (a->o[SLOT_CRATE + i] != b->o[SLOT_CRATE + i]) {
-            if (a->o[SLOT_CRATE + i]) render_cell(&room, b, a->o[SLOT_CRATE + i]);
-            if (b->o[SLOT_CRATE + i]) render_cell(&room, b, b->o[SLOT_CRATE + i]);
-        }
-    }
-    if (a->got != b->got) {
-        for (i = 0; i < RN; i++)
-            if (IS_PICK(room.cell[i])) render_cell(&room, b, i);
-    }
-    render_dynamic(&room, b);
-}
-
-/* ------------------------------------------------------------------ effects */
-
-static uint8_t px_of(uint8_t c) { return (uint8_t)(CX(c) * 16 + 8); }
-static uint8_t py_of(uint8_t c) { return (uint8_t)(CY(c) * 16 + 8); }
-
-static uint8_t scr_x(int16_t x) { return (uint8_t)((uint8_t)(room_x8 - scroll_x) + x); }
-static uint8_t scr_y(int16_t y) { return (uint8_t)((uint8_t)(room_y8 - scroll_y) + y); }
-
-static void dust(uint8_t slot)
-{
-    /* a puff where the object meets the surface */
-    int16_t y = vis_g == G_DOWN ? dpy[slot] + 14 : dpy[slot] - 2;
-    part_spawn(scr_x(dpx[slot] + 2), scr_y(y), -5, vis_g ? 2 : -2, SPR_PIXEL, SPAL_WHITE, 12);
-    part_spawn(scr_x(dpx[slot] + 10), scr_y(y), 5, vis_g ? 2 : -2, SPR_PIXEL, SPAL_WHITE, 12);
-}
-
-static void gravity_rain(uint8_t g)
-{
-    /* streaks race across the screen in the new direction of gravity */
-    uint8_t i;
-    for (i = 0; i < 8; i++) {
-        uint8_t x = (uint8_t)(8 + (fx_rand() % 144));
-        uint8_t y = (uint8_t)(g == G_DOWN ? 8 + (fx_rand() & 31) : 104 + (fx_rand() & 31));
-        part_spawn(x, y, 0, g == G_DOWN ? 40 : -40, SPR_STREAK, g == G_DOWN ? SPAL_SPARK_P : SPAL_SPARK_G,
-                   (uint8_t)(10 + (fx_rand() & 7)));
+    uint8_t want_lo = (uint8_t)(cam_x >> 4), want_hi;
+    if (want_lo) want_lo--;
+    want_hi = (uint8_t)(want_lo + 13);
+    if (want_hi >= stage.w) want_hi = (uint8_t)(stage.w - 1);
+    /* one column per frame at most: the camera never outruns that */
+    if (col_hi < want_hi && col_queued() < 4) {
+        col_hi++;
+        render_column(&stage, col_hi);
+        if (col_hi - col_lo > 14) col_lo++;
+    } else if (col_lo > want_lo && col_queued() < 4) {
+        col_lo--;
+        render_column(&stage, col_lo);
+        if (col_hi - col_lo > 14) col_hi--;
     }
 }
 
-static void explode(int16_t px, int16_t py, uint8_t pal)
+static void map_fill(void)
 {
-    part_burst(scr_x(px + 4), scr_y(py + 4), 10, SPR_SPARK_BIG, pal, 24, 0);
-    part_burst(scr_x(px + 4), scr_y(py + 4), 4, SPR_SPARK_SMALL, SPAL_WHITE, 12, 0);
+    /* everything around the camera, now (the screen is black) */
+    uint8_t c;
+    col_lo = (uint8_t)(cam_x >> 4);
+    if (col_lo) col_lo--;
+    col_hi = (uint8_t)(col_lo + 13);
+    if (col_hi >= stage.w) col_hi = (uint8_t)(stage.w - 1);
+    ENABLE_RAM;
+    stream_on = 1;
+    for (c = col_lo; c <= col_hi; c++) render_column(&stage, c);
+    while (col_queued()) wait_vbl_done();
 }
 
-/* ------------------------------------------------------------------ the turn */
-
-static int16_t fall_v[NOBJ];
-static int16_t fall_to[NOBJ];   /* target y (pixels) */
-static uint8_t falling;          /* bit per object */
-
-static void blocked_feedback(uint8_t act)
+/* d / 4 rounded towards zero, but never 0 for d != 0 (no division routine) */
+static int16_t quarter(int16_t d)
 {
-    uint8_t i;
-    sfx_play(act == ACT_FLIP ? SFX_ERROR : SFX_BUMP);
-    if (act == ACT_FLIP) {
-        fx_shake(1);
-        ticks(6);
-        return;
-    }
-    /* lean into the wall and back */
-    for (i = 0; i < 6; i++) {
-        dpx[0] += (i < 3) ? (act == ACT_L ? -1 : 1) : (act == ACT_L ? 1 : -1);
-        tick();
-    }
+    int16_t q = d >= 0 ? (int16_t)(d >> 2) : (int16_t)-((-d) >> 2);
+    return q ? q : d;
 }
 
-/* returns the TR_* of the turn */
-static uint8_t do_turn(uint8_t act)
+static void camera(uint8_t snap)
 {
-    State ns;
-    uint8_t r, i, f, k, moved_bots = 0;
-    int16_t tx;
-
-    memcpy(&ns, &st, sizeof(State));
-    r = sim_turn(&room, &ns, act, &lg);
-    if (r == TR_BLOCKED) {
-        blocked_feedback(act);
-        return r;
-    }
-    hint_shown = 0;
-    hist_push(&st);
-    run_on_move(&run);
-    if (act == ACT_L) facing = 1;
-    else if (act == ACT_R) facing = 0;
-
-    /* crates that move this turn leave the background and become sprites */
-    for (i = 0; i < MAX_CRATES; i++) {
-        k = (uint8_t)(SLOT_CRATE + i);
-        if (lg.start[k] && lg.start[k] != lg.end[k]) {
-            crate_spr |= (uint8_t)(1u << i);
-            render_hide |= (uint8_t)(1u << i);
-            render_cell(&room, &st, lg.start[k]);
-        }
-    }
-    for (i = SLOT_BOT; i < NOBJ; i++)
-        if (lg.start[i] && lg.step[i] != lg.start[i]) moved_bots = 1;
-
-    /* ---- phase 1: the step (or the flip) and the drones' step, 8 frames ---- */
-    if (act == ACT_FLIP) {
-        sfx_play(SFX_FLIP);
-        mech_pose = POSE_FLIP;
-        pose_t = 0;
-        gravity_rain(ns.g);
-        flash(3, 0);
+    uint16_t tx = cam_target_x();
+    uint8_t ty = cam_target_y();
+    int16_t d;
+    if (snap) {
+        cam_x = tx;
+        cam_y = ty;
     } else {
-        mech_pose = POSE_WALK;
-        pose_t = 0;
-        sfx_play((lg.flags & EV_PUSH) ? SFX_PUSH : SFX_STEP);
+        /* ease towards the target, at most 4 px a frame (the streaming keeps up) */
+        d = (int16_t)(tx - cam_x);
+        d = quarter(d);
+        if (d > 4) d = 4;
+        if (d < -4) d = -4;
+        cam_x = (uint16_t)(cam_x + d);
+        d = (int16_t)ty - (int16_t)cam_y;
+        d = quarter(d);
+        if (d > 3) d = 3;
+        if (d < -3) d = -3;
+        cam_y = (uint8_t)(cam_y + d);
     }
-    if (moved_bots) sfx_play(SFX_BOT_STEP);
-    for (f = 1; f <= 8; f++) {
-        for (i = 0; i < NOBJ; i++) {
-            if (!lg.start[i]) continue;
-            tx = (int16_t)(CX(lg.step[i] ? lg.step[i] : lg.start[i]) * 16);
-            if (i == 0 && (r == TR_WIN) && act == ACT_R && lg.end[0] == lg.start[0])
-                tx = (int16_t)(RW * 16);            /* walking out of the doorway */
-            if (i == 0 && r == TR_DEAD && act != ACT_FLIP && lg.died_at[0] != lg.start[0] &&
-                CY(lg.died_at[0]) == CY(lg.start[0]))
-                tx = (int16_t)(CX(lg.died_at[0]) * 16);
-            dpx[i] = (int16_t)(CX(lg.start[i]) * 16) + (int16_t)((tx - (int16_t)(CX(lg.start[i]) * 16)) * f / 8);
-            dmove[i] = (uint8_t)(tx != (int16_t)(CX(lg.start[i]) * 16));
-        }
-        if (act == ACT_FLIP && f == 4) {
-            vis_g = ns.g;
-            render_dynamic(&room, &ns);     /* the phase blocks swap */
-            hud_draw();
-        }
-        tick();
-    }
-    for (i = 0; i < NOBJ; i++) dmove[i] = 0;
-    if (r == TR_WIN && act == ACT_R) {
-        memcpy(&st, &ns, sizeof(State));
-        return r;
-    }
-
-    /* ---- phase 2: everything falls ---- */
-    falling = 0;
-    for (i = 0; i < NOBJ; i++) {
-        uint8_t from = lg.step[i] ? lg.step[i] : lg.start[i], to;
-        if (!lg.start[i] || !from) continue;
-        to = lg.end[i] ? lg.end[i] : lg.died_at[i];
-        if (i == 0 && r == TR_DEAD) to = lg.died_at[0] && lg.cause == DIE_ZAP ? lg.died_at[0] : lg.end[0];
-        if (!to) continue;
-        dpy[i] = (int16_t)(CY(from) * 16);
-        fall_to[i] = (int16_t)(CY(to) * 16);
-        if (i == 0 && r == TR_WIN) fall_to[0] = ns.g == G_DOWN ? (int16_t)(RH * 16 + 8) : -24;
-        if (fall_to[i] != dpy[i]) {
-            falling |= (uint8_t)(1u << i);
-            fall_v[i] = 0;
-        }
-    }
-    if (falling & 1) mech_pose = POSE_FALL;
-    while (falling) {
-        for (i = 0; i < NOBJ; i++) {
-            if (!(falling & (1u << i))) continue;
-            if (fall_v[i] < 8) fall_v[i]++;
-            if (fall_to[i] > dpy[i]) {
-                dpy[i] += fall_v[i];
-                if (dpy[i] >= fall_to[i]) dpy[i] = fall_to[i];
-            } else {
-                dpy[i] -= fall_v[i];
-                if (dpy[i] <= fall_to[i]) dpy[i] = fall_to[i];
-            }
-            /* a drone crushed by a falling crate goes when the crate reaches it */
-            for (k = SLOT_BOT; k < NOBJ; k++) {
-                if (dvis[k] && !lg.end[k] && lg.died_at[k] && lg.killer[k] == i &&
-                    ((fall_to[i] > (int16_t)(CY(lg.died_at[k]) * 16)) ?
-                        dpy[i] >= (int16_t)(CY(lg.died_at[k]) * 16) - 12 :
-                        dpy[i] <= (int16_t)(CY(lg.died_at[k]) * 16) + 12)) {
-                    dvis[k] = 0;
-                    explode(dpx[k], dpy[k], SPAL_DEAD);
-                    sfx_play(SFX_BOT_DIE);
-                    fx_shake(2);
-                }
-            }
-            if (dpy[i] == fall_to[i]) {
-                falling &= (uint8_t)~(1u << i);
-                if (i >= SLOT_BOT && !lg.end[i]) {
-                    if (dvis[i]) {
-                        dvis[i] = 0;
-                        explode(dpx[i], dpy[i], SPAL_DEAD);
-                        sfx_play(SFX_BOT_DIE);
-                    }
-                } else if (r != TR_WIN || i) {
-                    dust(i);
-                    if (fall_v[i] >= 4) {
-                        if (i == 0) {
-                            sfx_play(SFX_LAND);
-                            mech_pose = POSE_LAND;
-                            pose_t = 0;
-                            fx_shake(fall_v[i] >= 8 ? 2 : 1);
-                        } else if (i < SLOT_BOT) {
-                            sfx_play(SFX_CRATE_LAND);
-                            fx_shake(2);
-                        }
-                    }
-                }
-            }
-        }
-        tick();
-    }
-    if (mech_pose == POSE_LAND) ticks(3);
-    mech_pose = POSE_IDLE;
-
-    /* ---- phase 3: the results ---- */
-    for (i = 0; i < MAX_CRATES; i++) {
-        if (crate_spr & (1u << i)) {
-            crate_spr &= (uint8_t)~(1u << i);
-            render_hide &= (uint8_t)~(1u << i);
-            if (ns.o[SLOT_CRATE + i]) render_cell(&room, &ns, ns.o[SLOT_CRATE + i]);
-        }
-    }
-    if (lg.flags & EV_PICK) {
-        for (i = 0; i < RN; i++) {
-            if (IS_PICK(room.cell[i]) && (lg.picked & (1u << (room.cell[i] - T_PICK0)))) {
-                render_cell(&room, &ns, i);
-                part_burst(scr_x(px_of(i) - 4), scr_y(py_of(i) - 4), 8, SPR_STAR, SPAL_SPARK_G, 16, 0);
-            }
-        }
-        sfx_play(SFX_CELL);
-    }
-    if ((lg.flags & EV_DOOR) || (lg.flags & EV_EXIT_OPEN) || act == ACT_FLIP || room.mechs & MBIT(M_DOOR))
-        render_dynamic(&room, &ns);
-    if (lg.flags & EV_DOOR) sfx_play(SFX_DOOR);
-    if (lg.flags & EV_EXIT_OPEN) {
-        sfx_play(SFX_EXIT_OPEN);
-        flash(4, 1);
-        part_burst(scr_x(px_of(room.exit) - 4), scr_y(py_of(room.exit) - 4), 12, SPR_SPARK_BIG, SPAL_SPARK_G, 20, 0);
-    }
-    memcpy(&st, &ns, sizeof(State));
-    hud_draw();
-    return r;
+    scroll_x = (uint8_t)cam_x;
+    scroll_y = cam_y;
 }
 
-/* ------------------------------------------------------------------ death & rewind */
+/* ------------------------------------------------------------------ drawing */
 
-static void restore(const State *s)
+static void draw_mech(void)
 {
-    State old;
-    memcpy(&old, &st, sizeof(State));
-    memcpy(&st, s, sizeof(State));
-    redraw_diff(&old, &st);
-    place_all(&st);
-    hud_draw();
-}
-
-static void death(void)
-{
-    uint8_t i;
-    mech_pose = POSE_DEAD;
-    sfx_play(lg.cause == DIE_ZAP ? SFX_ZAP : SFX_CRUSH);
-    fx_shake(4);
-    flash(4, 1);
-    explode(dpx[0], dpy[0], SPAL_DEAD);
-    hud_msg(lg.cause == DIE_ZAP ? "PLASMA BREACH" : lg.cause == DIE_CRUSH ? "HULL CRUSHED" : "DRONE CONTACT", PAL_HAZARD);
-    for (i = 0; i < 40; i++) {
-        if ((i & 7) == 0) explode(dpx[0], dpy[0], SPAL_DEAD);
-        tick();
-    }
-    /* the turn is undone for free; its energy stays spent */
-    if (hist_pop(&st)) {
-        State s;
-        memcpy(&s, &st, sizeof(State));
-        memcpy(&st, &s, sizeof(State));
-    }
-    sfx_play(SFX_REWIND);
-    music_set_rewind(1);
-    render_build(&room, &st);
-    render_blit_all(room_ox, room_oy);
-    music_set_rewind(0);
-    place_all(&st);
-    mech_pose = POSE_IDLE;
-    hud_draw();
-}
-
-static void rewind_one(void)
-{
-    State s;
-    if (!hist_pop(&s)) {
-        sfx_play(SFX_ERROR);
+    uint8_t tile;
+    int16_t sx = (int16_t)(mech_px() - cam_x) - shake_x;
+    int16_t sy = (int16_t)mech_py() - (int16_t)cam_y - shake_y;
+    if (mech_hidden) {
+        hide4(SP_MECH);
         return;
     }
-    sfx_play(SFX_REWIND);
-    restore(&s);
-    hint_shown = 0;
+    switch (pose) {
+    case POSE_RUN: tile = ((pose_t >> 3) & 1) ? SPR_MECH_WALK2 : SPR_MECH_WALK1; break;
+    case POSE_AIR: tile = SPR_MECH_FALL; break;
+    case POSE_FLIP: tile = SPR_MECH_FLIP; break;
+    case POSE_LAND: tile = SPR_MECH_LAND; break;
+    case POSE_DEAD: tile = SPR_MECH_DEAD; break;
+    default: tile = ((frame >> 5) & 1) ? SPR_MECH_IDLE2 : SPR_MECH_IDLE; break;
+    }
+    spr16(SP_MECH, sx, sy, tile, mech.facing, mech.g == G_UP,
+          pose == POSE_DEAD ? SPAL_DEAD : (mech.g == G_DOWN ? SPAL_MECH_P : SPAL_MECH_G));
 }
 
-/* ------------------------------------------------------------------ hints */
-
-static void do_hint(void)
+static void draw_enemies(void)
 {
-    uint8_t n = 0;
-    if (!run_try_hint(&run)) {
-        sfx_play(SFX_ERROR);
-        hud_msg("NOT ENOUGH ENERGY", PAL_HAZARD);
-        ticks(40);
-        hud_draw();
-        return;
+    uint8_t i, n = 0, len, slot, k, rods = 0;
+    uint16_t ex;
+    uint8_t ey;
+    int16_t sx, sy;
+    for (i = 0; i < stage.nenemies && n < NUM_ESPR; i++) {
+        const Enemy *e = &stage.enemy[i];
+        if ((uint16_t)(e->x1 * 16 + 16) < cam_x || (uint16_t)(e->x0 * 16) > cam_x + 160) continue;
+        enemy_pos(e, stage_t, &ex, &ey, &len);
+        sx = (int16_t)(ex - cam_x) - shake_x;
+        sy = (int16_t)ey - (int16_t)cam_y - shake_y;
+        slot = (uint8_t)(SP_ENEMY + n * 4);
+        if (e->kind == E_CRUSHER) {
+            /* the piston head, and its rod above it */
+            spr16(slot, sx, (int16_t)(sy + len), SPR_CRATE, 0, 0, SPAL_CRATE);
+            for (k = 0; k < NUM_ROD && rods < NUM_ROD; k++) {
+                int16_t ry = (int16_t)(sy + len - 8 - k * 16);
+                if (ry < sy - 8) break;
+                if (ry < -8 || ry > 151) continue;
+                set_sprite_tile((uint8_t)(SP_ROD + rods), SPR_STREAK);
+                set_sprite_prop((uint8_t)(SP_ROD + rods), SPAL_CRATE);
+                move_sprite((uint8_t)(SP_ROD + rods), (uint8_t)(sx + 4 + 8), (uint8_t)(ry + 16));
+                rods++;
+            }
+        } else {
+            uint8_t t = e->kind == E_HOVER ? ((frame >> 2) & 1 ? SPR_BOT_A : SPR_BOT_B)
+                                           : ((frame >> 3) & 1 ? SPR_BOT_WALK : SPR_BOT_A);
+            spr16(slot, sx, sy, t, (uint8_t)(ex > mech_px()), e->kind == E_CRAWLER && e->y1,
+                  SPAL_BOT | S_PALETTE);
+        }
+        n++;
     }
-    sfx_play(SFX_HINT);
-    bg_request_hint(&room, &st);
-    hud_msg("COMPUTING...", PAL_GREEN);
-    while (bg_hint_state == 1) {
-        tick();
-        if (++n == 0) n = 1;
-    }
-    bg_hint_state = 0;
-    if (!bg_hint_rem) {
-        hud_msg("NO WAY OUT: REWIND", PAL_HAZARD);
-        ticks(50);
-    } else {
-        hint_act = bg_hint_act;
-        hint_shown = 1;
-        hud_msg("", PAL_UI);
-        txt(1, 2, 0, "TURNS LEFT", PAL_GREEN);
-        txt_num(1, 14, 0, bg_hint_rem, 2, PAL_UI);
-        ticks(40);
-    }
-    hud_draw();
+    for (; n < NUM_ESPR; n++) hide4((uint8_t)(SP_ENEMY + n * 4));
+    for (; rods < NUM_ROD; rods++) move_sprite((uint8_t)(SP_ROD + rods), 0, 0);
 }
 
-/* ------------------------------------------------------------------ map & pause */
+/* ------------------------------------------------------------------ frame */
 
-static void map_add(int16_t rx, int16_t ry)
+static void frame_end(void)
 {
-    map_rx[map_head] = rx;
-    map_ry[map_head] = ry;
-    map_head = (uint8_t)((map_head + 1) % MAP_N);
-    if (map_n < MAP_N) map_n++;
+    draw_mech();
+    dbg_ly[5] = LY_REG; dbg_f[5] = frame;
+    draw_enemies();
+    dbg_ly[6] = LY_REG; dbg_f[6] = frame;
+    play_ly = LY_REG;
+    wait_vbl_done();
+    /* a frame of play must take exactly one frame */
+    if (play_state == PS_PLAY && (uint8_t)(frame - last_frame) != 1) play_lag++;
+    last_frame = frame;
+    dbg_ly[7] = LY_REG; dbg_f[7] = frame;
+    input_poll();
+    fx_update();
 }
 
-static void show_map(void)
+static void frames(uint8_t n)
 {
-    uint8_t i, k;
-    int16_t x, y;
-    clear_win();
-    move_win(7, 0);
-    txt(1, 1, 0, "STATION MAP", PAL_GREEN);
-    txt(1, 13, 0, "DECK", PAL_DIM);
-    txt_num(1, 18, 0, (uint8_t)((room.index - 1) / DECK_ROOMS + 1), 2, PAL_UI);
-    for (i = 0; i < map_n; i++) {
-        k = (uint8_t)((map_head + MAP_N - 1 - i) % MAP_N);
-        x = 10 + map_rx[k] - door.rx;
-        y = 9 + map_ry[k] - door.ry;
-        if (x < 0 || x > 19 || y < 2 || y > 16) continue;
-        put_tile(1, (uint8_t)x, (uint8_t)y, i == 0 ? UI_STAR : UI_BAR_FULL, i == 0 ? PAL_GREEN : PAL_PURPLE);
+    while (n--) {
+        stage_t++;
+        frame_end();
     }
-    txt(1, 3, 17, "B: BACK", PAL_DIM);
+}
+
+/* ------------------------------------------------------------------ the stage card */
+
+static void stage_card(void)
+{
+    uint8_t d = (uint8_t)(stage.deck % 8);
+    play_state = PS_CARD;
     gfx_hide_sprites();
-    do { tick(); } while (!(joy_new & (J_B | J_START | J_A)));
-    sfx_play(SFX_MENU);
-}
-
-/* returns 0 resume, 1 restart, 2 quit */
-static uint8_t pause_menu(void)
-{
-    static const char *const items[5] = { "RESUME", "RESTART ROOM", "HINT", "STATION MAP", "QUIT RUN" };
-    uint8_t sel = 0, i, result = 0xFF;
-    music_set_muffle(1);
-    sfx_play(SFX_SELECT);
-    while (result == 0xFF) {
-        clear_win();
-        move_win(7, 56);
-        draw_box(1, 2, 0, 16, 9, PAL_PURPLE);
-        txt(1, 4, 0, " PAUSED ", PAL_GREEN);
-        for (i = 0; i < 5; i++) txt(1, 5, (uint8_t)(2 + i), items[i], i == sel ? PAL_GREEN : PAL_UI);
-        txt(1, 4, 8, "SEED", PAL_DIM);
-        txt_hex(1, 9, 8, run.seed, PAL_UI);
-        for (;;) {
-            put_tile(1, 4, (uint8_t)(2 + sel), FONT_TILE('>'), PAL_GREEN);
-            tick();
-            if (joy_new & (J_UP | J_DOWN)) {
-                put_tile(1, 4, (uint8_t)(2 + sel), TILE_BLANK, PAL_UI);
-                txt(1, 5, (uint8_t)(2 + sel), items[sel], PAL_UI);
-                sel = (uint8_t)((sel + ((joy_new & J_UP) ? 4 : 1)) % 5);
-                txt(1, 5, (uint8_t)(2 + sel), items[sel], PAL_GREEN);
-                sfx_play(SFX_MENU);
-            } else if (joy_new & (J_B | J_START)) {
-                result = 0;
-                break;
-            } else if (joy_new & J_A) {
-                sfx_play(SFX_SELECT);
-                if (sel == 3) {
-                    show_map();
-                    break;              /* redraw the menu */
-                }
-                result = sel == 0 ? 0 : sel == 1 ? 1 : sel == 2 ? 3 : 2;
-                break;
-            }
-        }
-    }
+    part_clear();
+    HIDE_WIN;
+    move_win(7, 0);
     clear_win();
-    move_win(7, HUD_WY);
-    music_set_muffle(0);
-    hud_draw();
-    return result;
+    SHOW_WIN;
+    txt(1, 5, 5, "STAGE", PAL_DIM);
+    txt_num(1, 11, 5, run.stage > 999 ? 999 : run.stage, 3, PAL_UI);
+    txt(1, 4, 7, "DECK", PAL_DIM);
+    txt_num(1, 9, 7, (uint8_t)(stage.deck + 1), 2, PAL_GREEN);
+    txt(1, 12, 7, deck_names[d], PAL_PURPLE);
+    if (run.stage == 1) {
+        txt(1, 3, 11, "A: FLIP GRAVITY", PAL_GREEN);
+        txt(1, 3, 12, "B: JUMP", PAL_UI);
+    } else if (stage.featured != 0xFF) {
+        txt(1, 4, 11, "NEW HAZARD:", PAL_HAZARD);
+        txt(1, (uint8_t)((20 - strlen(mech_names[stage.featured])) / 2), 12, mech_names[stage.featured], PAL_UI);
+    }
+    txt(1, 5, 15, "SEED", PAL_DIM);
+    txt_hex(1, 10, 15, run.seed, PAL_DIM);
+    fade_to(0);
 }
 
-/* ------------------------------------------------------------------ rooms */
-
-static void start_state(void)
-{
-    state_start(&room, &st);
-    hist_n = 0;
-    hist_top = 0;
-    run.moves = 0;
-    hint_shown = 0;
-    queued = 0xFF;
-}
-
-static void music_for_room(void)
+static void music_for_stage(void)
 {
     static const uint8_t songs[3] = { SONG_DECK_A, SONG_DECK_B, SONG_DECK_C };
-    uint8_t s = run.mode == MODE_ZEN ? SONG_ZEN : songs[((room.index - 1) / DECK_ROOMS) % 3];
-    if (!music_playing() || s != (uint8_t)0xFF) music_play(s);
+    music_play(run.mode == MODE_ZEN ? SONG_ZEN : songs[stage.deck % 3]);
 }
 
-static void announce_room(uint8_t deck_change)
+/* ------------------------------------------------------------------ spawning */
+
+static void spawn(void)
 {
-    uint8_t d = (uint8_t)((room.index - 1) / DECK_ROOMS);
-    if (deck_change) {
-        hud_msg("", PAL_GREEN);
-        txt(1, 1, 0, "DECK", PAL_DIM);
-        txt_num(1, 6, 0, (uint8_t)(d + 1), 2, PAL_GREEN);
-        txt(1, 9, 0, deck_names[d % 8], PAL_UI);
-        sfx_play(SFX_DECK);
-        ticks(70);
-    } else if (room.featured != 0xFF) {
-        static const char *const lessons[NUM_MECH] = {
-            "NEW: PLASMA", "NEW: ENERGY CELLS", "NEW: CARGO", "NEW: HUNTER DRONES",
-            "NEW: PHASE BLOCKS", "NEW: PLATES+DOORS" };
-        hud_msg(lessons[room.featured], PAL_GREEN);
-        sfx_play(SFX_NEWMECH);
-        ticks(70);
-    }
-    hud_draw();
+    uint8_t f;
+    mech_spawn(&mech, spawn_x, spawn_y, G_DOWN);
+    /* settle onto the floor */
+    for (f = 0; f < 24; f++) mech_step(&mech, &stage, 0, stage_t);
+    pose = POSE_IDLE;
+    mech_hidden = 0;
+    gfx_phase(G_DOWN);
+    camera(1);
 }
 
-/* wait for the generator, with a progress readout */
-static void wait_next_room(void)
+static void stage_begin(void)
 {
-    uint8_t n = 0;
-    if (bg_ready()) return;
-    hud_msg("SCANNING", PAL_GREEN);
-    while (!bg_ready()) {
-        tick();
-        scan_frames++;
-        if ((++n & 15) == 0) {
-            sfx_play(SFX_SCAN);
-            put_tile(1, (uint8_t)(14 + ((n >> 4) & 3)), 0, (n & 16) ? UI_BAR_FULL : UI_BAR_HALF, PAL_GREEN);
-        }
+    uint16_t t0;
+    fade_to(4);
+    stage_card();
+    t0 = frame;
+    stream_on = 0;
+    stage_gen(&stage, run.seed, run.stage);
+    render_prebuild(&stage);
+    pal_set_deck(stage.deck);
+    /* keep the card up a moment */
+    while ((uint8_t)(frame - t0) < 100) {
+        wait_vbl_done();
+        input_poll();
+        if (joy_new & (J_A | J_START)) break;
     }
-}
-
-/* scroll from this room into the next one (built and waiting in the queue) */
-static void transition(void)
-{
-    uint8_t dir = room.exit_side, nox = room_ox, noy = room_oy, done_cols = 0, steps, s;
-    uint32_t written = 0;               /* bit per column / row of the new room */
-    uint8_t total, i, vis0, vis1;
-    int16_t mx, my;
-    State ns;
-    uint8_t deck_change;
-
-    if (dir == SIDE_R) nox = (uint8_t)((room_ox + ROOM_TW) & 31);
-    else if (dir == SIDE_T) noy = (uint8_t)((room_oy - ROOM_TH) & 31);
-    else noy = (uint8_t)((room_oy + ROOM_TH) & 31);
-
-    bg_take(&room, &door);
-    if (run.mode == MODE_ZEN) {
-        save.zen_seed = run.seed;
-        memcpy(&save.zen_door, &door, sizeof(Door));
-        save_write();
-    }
-    state_start(&room, &ns);
-    render_hide = 0;
-    render_build(&room, &ns);
-    /* the mech's position in the new room's coordinates */
-    mx = dpx[0];
-    my = dpy[0];
-    if (dir == SIDE_R) mx -= RW * 16;
-    else if (dir == SIDE_T) my += RH * 16;
-    else my -= RH * 16;
-    for (i = 1; i < NOBJ; i++) dvis[i] = 0;
-    total = dir == SIDE_R ? ROOM_TW : ROOM_TH;
-    steps = dir == SIDE_R ? 40 : 36;        /* 4 px a frame */
-    for (s = 0; s <= steps; s++) {
-        /* write every new column / row that is off screen right now */
-        vis0 = dir == SIDE_R ? (uint8_t)(scroll_x >> 3) : (uint8_t)(scroll_y >> 3);
-        vis1 = (uint8_t)(vis0 + (dir == SIDE_R ? 20 : 18));
-        for (i = 0; i < total && done_cols < 3; i++) {
-            uint8_t m, d;
-            if (written & ((uint32_t)1 << i)) continue;
-            m = (uint8_t)(((dir == SIDE_R ? nox : noy) + i) & 31);
-            d = (uint8_t)((m - vis0) & 31);
-            if (d <= (uint8_t)(vis1 - vis0)) continue;     /* still on screen */
-            if (dir == SIDE_R) render_blit_col(i, nox, noy);
-            else render_blit_row(i, nox, noy);
-            written |= (uint32_t)1 << i;
-            done_cols++;
-        }
-        done_cols = 0;
-        if (s == steps) break;
-        if (dir == SIDE_R) scroll_x += 4;
-        else if (dir == SIDE_T) scroll_y -= 4;
-        else scroll_y += 4;
-        /* the mech keeps moving with the camera, into the doorway */
-        if (dir == SIDE_R && dpx[0] < RW * 16 + 16) dpx[0] += 1;
-        tick();
-    }
-    /* anything not yet written (it was on screen the whole time) */
-    for (i = 0; i < total; i++)
-        if (!(written & ((uint32_t)1 << i))) {
-            if (dir == SIDE_R) render_blit_col(i, nox, noy);
-            else render_blit_row(i, nox, noy);
-        }
-    room_ox = nox;
-    room_oy = noy;
-    room_x8 = (uint8_t)(room_ox * 8);
-    room_y8 = (uint8_t)(room_oy * 8);
-    scroll_x = room_x8;
-    scroll_y = room_y8;
-
-    deck_change = (uint8_t)(room.index > 1 && (room.index - 1) % DECK_ROOMS == 0);
-    if (deck_change) {
-        pal_set_deck((uint8_t)((room.index - 1) / DECK_ROOMS));
-        flash(6, 1);
-        music_for_room();
-    }
-    map_add(door.rx, door.ry);
-
-    /* the mech arrives: from the side it walks in, from above / below it drops in */
-    memcpy(&st, &ns, sizeof(State));
-    hist_n = 0;
-    hist_top = 0;
-    run.moves = 0;
-    hint_shown = 0;
-    vis_g = room.g0;
-    dvis[0] = 1;
-    dpx[0] = (int16_t)(CX(room.entry) * 16);
-    dpy[0] = (int16_t)(CY(room.entry) * 16);
-    if (room.entry_side == SIDE_L && mx < 0) dpx[0] = mx;
-    if (room.entry_side != SIDE_L) dpy[0] = my;
-    for (i = 1; i < NOBJ; i++) {
-        dvis[i] = (uint8_t)(st.o[i] != NONE);
-        if (st.o[i]) {
-            dpx[i] = (int16_t)(CX(st.o[i]) * 16);
-            dpy[i] = (int16_t)(CY(st.o[i]) * 16);
-        }
-    }
-    /* walk / drop to the start position */
-    mech_pose = POSE_WALK;
-    while (dpx[0] < (int16_t)(CX(st.o[0]) * 16)) { dpx[0] += 2; tick(); }
-    {
-        int16_t ty = (int16_t)(CY(st.o[0]) * 16), v = 2;
-        mech_pose = POSE_FALL;
-        while (dpy[0] != ty) {
-            if (v < 8) v++;
-            if (dpy[0] < ty) { dpy[0] += v; if (dpy[0] > ty) dpy[0] = ty; }
-            else { dpy[0] -= v; if (dpy[0] < ty) dpy[0] = ty; }
-            tick();
-        }
-    }
-    mech_pose = POSE_IDLE;
-    place_all(&st);
-    queued = 0xFF;
-    /* gravity realigns in a side airlock */
-    hud_draw();
-    announce_room(deck_change);
-}
-
-static void enter_first_room(const Door *d)
-{
-    bg_reset(run.seed, d);
-    clear_win();
+    fade_to(4);
+    HIDE_WIN;
+    checked = 0;
+    render_checked = 0;
+    spawn_x = stage.start_x;
+    spawn_y = stage.start_y;
+    stage_t = 0;
+    demo_jheld = 0;
+    run.stage_cells = 0;
+    run.stage_time = 0;
+    spawn();
+    map_fill();
     move_win(7, HUD_WY);
+    hud_full();
     SHOW_WIN;
-    hud_msg("BOOTING", PAL_GREEN);
-    wait_next_room();
-    bg_take(&room, &door);
-    start_state();
-    room_ox = room_oy = 0;
-    room_x8 = room_y8 = 0;
-    scroll_x = scroll_y = 0;
-    pal_set_deck((uint8_t)((room.index - 1) / DECK_ROOMS));
-    render_hide = 0;
-    render_build(&room, &st);
-    render_blit_all(0, 0);
-    place_all(&st);
-    map_n = map_head = 0;
-    map_add(door.rx, door.ry);
+    laser_was = 0xFF;
+    hud_msg_t = 0;
+    music_for_stage();
+    frame_end();
     fade_to(0);
-    music_for_room();
-    hud_draw();
-    announce_room(0);
+    play_state = PS_PLAY;
+}
+
+/* ------------------------------------------------------------------ events */
+
+static void land_fx(void)
+{
+    uint8_t y = mech.g ? (uint8_t)(mech_py()) : (uint8_t)(mech_py() + 15);
+    part_spawn((uint16_t)(mech_px() + 4), y, -6, mech.g ? 2 : -2, SPR_PIXEL, SPAL_WHITE, 12);
+    part_spawn((uint16_t)(mech_px() + 11), y, 6, mech.g ? 2 : -2, SPR_PIXEL, SPAL_WHITE, 12);
+    if (mech.land_v >= 12) {
+        fx_shake(mech.land_v >= 16 ? 2 : 1);
+        sfx_play(SFX_LAND);
+    } else {
+        sfx_play(SFX_STEP);
+    }
+}
+
+static void flip_fx(void)
+{
+    uint8_t i;
+    dbg_q[0] = LY_REG;
+    sfx_play(SFX_FLIP);
+    flash(3, 0);
+    dbg_q[1] = LY_REG;
+    gfx_phase(mech.g);
+    dbg_q[2] = LY_REG;
+    for (i = is_cgb ? 0 : 3; i < 6; i++) {
+        uint16_t x = (uint16_t)(cam_x + 8 + (fx_rand() & 127) + (fx_rand() & 15));
+        uint8_t y = (uint8_t)(cam_y + (mech.g ? 100 + (fx_rand() & 31) : 8 + (fx_rand() & 31)));
+        part_spawn(x, y, 0, mech.g ? -40 : 40, SPR_STREAK, mech.g ? SPAL_SPARK_G : SPAL_SPARK_P,
+                   (uint8_t)(10 + (fx_rand() & 7)));
+    }
+    dbg_q[3] = LY_REG;
+}
+
+static void cell_fx(void)
+{
+    render_cell(&stage, ev_cx, ev_cy);
+    part_burst((uint16_t)(ev_cx * 16 + 4), (uint8_t)(ev_cy * 16 + 4), 6, SPR_STAR, SPAL_SPARK_G, 8, 0);
+    if (run_cell(&run)) {
+        sfx_play(SFX_NEWMECH);
+        hud_msg("EXTRA LIFE", PAL_GREEN);
+        hud_msg_t = 60;
+    } else {
+        sfx_play(SFX_CELL);
+    }
+}
+
+static void check_fx(void)
+{
+    if (checked) return;
+    checked = 1;
+    render_checked = 1;
+    render_cell(&stage, stage.check_x, stage.check_y);
+    spawn_x = stage.check_x;
+    spawn_y = stage.check_y;
+    sfx_play(SFX_EXIT_OPEN);
+    part_burst((uint16_t)(stage.check_x * 16 + 4), (uint8_t)(stage.check_y * 16), 10, SPR_SPARK_BIG, SPAL_SPARK_G, 10, -1);
+    hud_msg("CHECKPOINT", PAL_GREEN);
+    hud_msg_t = 60;
+}
+
+/* returns 1 if the run is over */
+static uint8_t death(void)
+{
+    uint8_t i, over;
+    play_state = PS_DEAD;
+    pose = POSE_DEAD;
+    sfx_play(mech.dead == DIE_PLASMA || mech.dead == DIE_LASER ? SFX_ZAP : SFX_CRUSH);
+    fx_shake(4);
+    flash(4, 1);
+    music_set_rewind(1);
+    hud_msg(mech.dead == DIE_PLASMA ? "PLASMA BREACH" : mech.dead == DIE_LASER ? "LASER BURN" :
+            mech.dead == DIE_CRUSHER ? "HULL CRUSHED" : "DRONE CONTACT", PAL_HAZARD);
+    for (i = 0; i < 50; i++) {
+        if ((i & 7) == 0)
+            part_burst((uint16_t)(mech_px() + 4), (uint8_t)(mech_py() + 4), 5, SPR_SPARK_BIG, SPAL_DEAD, 12, 0);
+        if (i == 20) mech_hidden = 1;      /* (the wreck vanishes) */
+        frames(1);
+    }
+    music_set_rewind(0);
+    over = run_death(&run);
+    if (over) return 1;
+    fade_to(4);
+    part_clear();
+    spawn();
+    map_fill();
+    hud_full();
+    frame_end();
+    fade_to(0);
+    play_state = PS_PLAY;
+    return 0;
+}
+
+/* the exit: walk out, tally */
+static void clear_stage(void)
+{
+    uint16_t bonus;
+    uint8_t i, all = (uint8_t)(stage.ncells && run.stage_cells >= stage.ncells);
+    play_state = PS_CLEAR;
+    sfx_play(SFX_EXIT);
+    for (i = 0; i < 30; i++) {
+        mech.x += RUN_MAX;
+        pose = POSE_RUN;
+        pose_t++;
+        frames(1);
+    }
+    bonus = run_clear(&run, stage.w, stage.ncells);
+    save.total_stages++;
+    save.total_cells += run.stage_cells;
+    if (run.mode == MODE_RUN) {
+        if (run.stage > save.best_stage) save.best_stage = run.stage;
+        if (run.score > save.best_score) save.best_score = run.score;
+    } else {
+        save.zen_seed = run.seed;
+        save.zen_stage = run.stage;
+    }
+    stream_on = 0;
+    save_write();
+    music_play(SONG_GAMEOVER);  /* (the short sting doubles as a fanfare) */
+    sfx_play(all ? SFX_OPTIMAL : SFX_SELECT);
+    HIDE_WIN;
+    move_win(7, 32);
+    clear_win();
+    draw_box(1, 2, 0, 16, 9, PAL_PURPLE);
+    txt(1, 4, 1, "STAGE CLEAR", PAL_GREEN);
+    put_tile(1, 4, 3, UI_CELL, PAL_GREEN);
+    txt_num(1, 6, 3, run.stage_cells, 2, PAL_UI);
+    txt(1, 8, 3, "/", PAL_DIM);
+    txt_num(1, 9, 3, stage.ncells, 2, PAL_UI);
+    if (all) txt(1, 12, 3, "ALL!", PAL_GREEN);
+    txt(1, 4, 5, "BONUS", PAL_DIM);
+    txt_num(1, 10, 5, bonus, 5, PAL_UI);
+    txt(1, 4, 7, "SCORE", PAL_DIM);
+    txt_num(1, 10, 7, (uint16_t)(run.score > 65535u ? 65535u : run.score), 5, PAL_GREEN);
+    SHOW_WIN;
+    for (i = 0; i < 150; i++) {
+        frames(1);
+        if (i > 30 && (joy_new & (J_A | J_START))) break;
+    }
+}
+
+/* ------------------------------------------------------------------ pause */
+
+/* 0 resume, 1 quit */
+static uint8_t pause_menu(void)
+{
+    uint8_t sel = 0, r = 0xFF;
+    play_state = PS_PAUSE;
+    music_set_muffle(1);
+    sfx_play(SFX_SELECT);
+    HIDE_WIN;
+    move_win(7, 48);
+    clear_win();
+    draw_box(1, 3, 0, 14, 7, PAL_PURPLE);
+    txt(1, 6, 0, " PAUSED ", PAL_GREEN);
+    txt(1, 6, 2, "RESUME", PAL_UI);
+    txt(1, 6, 3, "QUIT RUN", PAL_UI);
+    txt(1, 5, 5, "SEED", PAL_DIM);
+    txt_hex(1, 10, 5, run.seed, PAL_UI);
+    SHOW_WIN;
+    while (r == 0xFF) {
+        put_tile(1, 5, 2, sel == 0 ? FONT_TILE('>') : TILE_BLANK, PAL_GREEN);
+        put_tile(1, 5, 3, sel == 1 ? FONT_TILE('>') : TILE_BLANK, PAL_GREEN);
+        wait_vbl_done();
+        input_poll();
+        fx_update();
+        if (joy_new & (J_UP | J_DOWN)) { sel ^= 1; sfx_play(SFX_MENU); }
+        if (joy_new & (J_START | J_B)) r = 0;
+        if (joy_new & J_A) r = sel;
+    }
+    sfx_play(SFX_SELECT);
+    HIDE_WIN;
+    move_win(7, HUD_WY);
+    hud_full();
+    SHOW_WIN;
+    music_set_muffle(0);
+    play_state = PS_PLAY;
+    return r;
 }
 
 /* ------------------------------------------------------------------ the loop */
 
-static uint8_t clear_room(void)
+/* Demo input: moves (one per 4 frames of the stage clock, see tests/physbot.c) instead
+ * of the joypad, so a replay never depends on frame timing. The ROM tests load the host
+ * bot's moves here. */
+#define DEMO_MAX 768
+uint8_t demo_on;
+uint16_t demo_len;
+uint8_t demo_buf[DEMO_MAX];
+static const uint8_t demo_acts[9][2] = {
+    { 0, 0 }, { IN_L, 0 }, { IN_R, 0 },
+    { IN_JUMP, IN_JUMP_NEW }, { IN_L | IN_JUMP, IN_JUMP_NEW }, { IN_R | IN_JUMP, IN_JUMP_NEW },
+    { 0, IN_FLIP_NEW }, { IN_L, IN_FLIP_NEW }, { IN_R, IN_FLIP_NEW } };
+
+static uint8_t demo_bits(void)
 {
-    uint8_t gain, grade;
-    grade = run_grade(run.moves, room.par);
-    gain = run_on_win(&run, room.par);
-    sfx_play(SFX_EXIT);
-    if (grade == GRADE_BEST) {
-        save.total_opt++;
-        sfx_play(SFX_OPTIMAL);
-        hud_msg("", PAL_GREEN);
-        txt(1, 2, 0, "OPTIMAL", PAL_GREEN);
-        part_burst(80, 70, 12, SPR_STAR, SPAL_SPARK_G, 28, 0);
-    } else {
-        hud_msg("", PAL_UI);
-        txt(1, 2, 0, grade == GRADE_GOOD ? "ALIGNED" : "CLEARED", PAL_UI);
-    }
-    if (run.mode == MODE_RUN) {
-        put_tile(1, 12, 0, UI_BOLT, PAL_UI);
-        txt(1, 13, 0, "+", PAL_GREEN);
-        txt_num(1, 14, 0, gain, 2, PAL_GREEN);
-    }
-    save.total_rooms++;
-    if (run.mode == MODE_RUN) {
-        if (run.room > save.run_best_room) {
-            save.run_best_room = run.room;
-            save.run_best_opt = run.bests;
-        }
-    }
-    ticks(30);
-    wait_next_room();
-    save_write();
-    transition();
-    return 0;
+    uint16_t k = (uint16_t)(stage_t >> 2);
+    uint8_t a, in, press;
+    if (k >= demo_len) return 0;
+    a = demo_buf[k];
+    in = demo_acts[a][0];
+    press = (stage_t & 3) ? 0 : demo_acts[a][1];
+    if ((press & IN_JUMP_NEW) && demo_jheld) press &= (uint8_t)~IN_JUMP_NEW;
+    if ((stage_t & 3) == 3) demo_jheld = (uint8_t)((in & IN_JUMP) != 0);
+    return (uint8_t)(in | press);
 }
 
-uint8_t play_run(const Door *d) BANKED
+static uint8_t input_bits(void)
 {
-    uint8_t act, r, held = 0, p;
+    if (demo_on) return demo_bits();
+    {
+    uint8_t j = joy, n = joy_new, in = 0;
+    if (j & J_LEFT) in = IN_L;
+    else if (j & J_RIGHT) in = IN_R;
+    if (j & J_B) in |= IN_JUMP;
+    if (n & J_B) in |= IN_JUMP_NEW;
+    if (n & J_A) in |= IN_FLIP_NEW;
+    return in;
+    }
+}
 
+uint8_t play_run(void) BANKED
+{
+    uint8_t in;
+    uint16_t ev;
     gfx_load_play_tiles();
-    gfx_hide_sprites();
-    part_clear();
-    enter_first_room(d);
-
+    stage_begin();
     for (;;) {
-        play_idle = 1;
-        tick();
-        if (run.mode == MODE_RUN && run.energy == 0) {
-            /* out of energy */
-            hud_msg("POWER DEPLETED", PAL_HAZARD);
-            music_stop();
-            ticks(90);
-            return PLAY_OVER;
-        }
+        /* input (START first: SDCC 4.4 miscompiled a bit test that came after the
+         * others here, opening the pause menu on A) */
         if (joy_new & J_START) {
-            play_idle = 0;
-            p = pause_menu();
-            if (p == 1) {
-                State s0;
-                state_start(&room, &s0);
-                restore(&s0);
-                hist_n = 0;
-                hist_top = 0;
-                sfx_play(SFX_REWIND);
-            } else if (p == 2) {
+            if (pause_menu()) {
                 music_stop();
+                stream_on = 0;
                 return PLAY_QUIT;
-            } else if (p == 3) {
-                do_hint();
             }
             continue;
         }
-        if (joy_new & J_SELECT) {
-            do_hint();
-            continue;
+        in = input_bits();
+        dbg_ly[0] = LY_REG; dbg_f[0] = frame;
+        /* physics */
+        stage_t++;
+        if (run.stage_time < 65535u) run.stage_time++;
+        ev = mech_step(&mech, &stage, in, stage_t);
+        dbg_ly[1] = LY_REG; dbg_f[1] = frame;
+        if (ev & EV_FLIP) {
+            flip_fx();
+            pose = POSE_FLIP;
+            pose_t = 0;
         }
-        if (joy & J_B) {
-            /* hold B: rewind, one turn every 8 frames */
-            if (!rewinding || ++held >= 8) {
-                if (!rewinding) music_set_rewind(1);
-                rewinding = 1;
-                held = 0;
-                rewind_one();
+        if (ev & EV_NOFLIP) sfx_play(SFX_ERROR);
+        if (ev & EV_JUMP) sfx_play(SFX_BUMP);
+        if (ev & EV_LAND) {
+            land_fx();
+            pose = POSE_LAND;
+            pose_t = 0;
+        } else if (ev & EV_STEP) {
+            sfx_play(SFX_STEP);
+        }
+        if (ev & EV_CELL) cell_fx();
+        if (ev & EV_CHECK) check_fx();
+        if (ev & EV_DEAD) {
+            if (death()) {
+                music_stop();
+                stream_on = 0;
+                return PLAY_OVER;
             }
             continue;
         }
-        if (rewinding) {
-            rewinding = 0;
-            music_set_rewind(0);
+        if (ev & EV_EXIT) {
+            clear_stage();
+            stage_begin();
+            continue;
         }
-        act = 0xFF;
-        if (queued != 0xFF) {
-            act = queued;
-            queued = 0xFF;
-        } else if (joy & J_LEFT) act = ACT_L;
-        else if (joy & J_RIGHT) act = ACT_R;
-        else if (joy_new & J_A) act = ACT_FLIP;
-        if (act == 0xFF) continue;
-        play_idle = 0;
-        r = do_turn(act);
-        if (r == TR_DEAD) {
-            death();
-        } else if (r == TR_WIN) {
-            clear_room();
+        /* the mech's pose */
+        pose_t++;
+        if (pose == POSE_FLIP && pose_t < 10) {
+        } else if (pose == POSE_LAND && pose_t < 6) {
+        } else if (!mech.ground) {
+            pose = POSE_AIR;
+        } else if (mech.vx) {
+            if (pose != POSE_RUN) pose_t = 0;
+            pose = POSE_RUN;
+        } else {
+            pose = POSE_IDLE;
         }
+        /* laser gates blink */
+        if (laser_on(stage_t) != laser_was) {
+            laser_was = laser_on(stage_t);
+            gfx_laser(laser_was);
+        }
+        dbg_ly[2] = LY_REG; dbg_f[2] = frame;
+        camera(0);
+        stream();
+        dbg_ly[3] = LY_REG; dbg_f[3] = frame;
+        if (hud_msg_t) {
+            if (!--hud_msg_t) hud_full();
+        } else {
+            hud_update();
+        }
+        dbg_ly[4] = LY_REG; dbg_f[4] = frame;
+        frame_end();
     }
 }

@@ -1,210 +1,187 @@
-/* ALIGNMENT - room rendering: auto-tiled hull, metatiles, the dynamic cells. */
+/* ALIGNMENT - turning a stage into background tiles.
+ * The BG map is a 16-cell ring: stage column cx lives in map tile columns
+ * (cx * 2) & 31 and +1, all 32 tile rows (the stage is exactly 16 cells tall). */
 #pragma bank 255
 #include <gb/gb.h>
 #include <string.h>
 #include "gfx.h"
 #include "render.h"
+#include "assets.h"
 
-uint8_t room_ox, room_oy;
-uint8_t render_hide;
-uint8_t rbuf_t[ROOM_TW * ROOM_TH];
-uint8_t rbuf_a[ROOM_TW * ROOM_TH];
+extern uint8_t r_wall_tile[];
+extern uint8_t r_mt_tiles[];
+extern uint8_t r_mt_pal[];
 
-static const Room *cR;
-static const State *cS;
+static const Stage *cS;
 static uint8_t q_t[4], q_a[4];
+static uint8_t col_t[2][32], col_a[2][32];
+uint8_t render_checked;     /* the checkpoint is lit */
 
-static uint8_t is_wall(int8_t x, int8_t y)
-{
-    if (x < 0 || y < 0 || x >= RW || y >= RH) return 1;
-    return (uint8_t)(cR->cell[CELL(x, y)] == T_WALL);
-}
+/* wall flags of the column being built and its two neighbours, with a wall row of
+ * padding above and below: wl / wc / wr [y + 1] */
+static uint8_t wl[SH + 2], wc[SH + 2], wr[SH + 2];
 
-static uint8_t hash_xy(uint8_t x, uint8_t y)
+static void wall_flags(uint8_t *dst, int16_t x)
 {
-    return (uint8_t)(x * 7 + y * 13 + x * y + (uint8_t)cR->index * 5);
-}
-
-static void wall_quarters(uint8_t x, uint8_t y)
-{
-    /* each 8x8 quarter looks at its two orthogonal neighbours and the diagonal */
-    static const int8_t qdx[4] = { -1, 1, -1, 1 };
-    static const int8_t qdy[4] = { -1, -1, 1, 1 };
-    uint8_t q, v, h, d, var, fill2;
-    fill2 = (uint8_t)((hash_xy(x, y) % 6) == 0);
-    for (q = 0; q < 4; q++) {
-        v = is_wall((int8_t)x, (int8_t)(y + qdy[q]));
-        h = is_wall((int8_t)(x + qdx[q]), (int8_t)y);
-        if (v && h) {
-            d = is_wall((int8_t)(x + qdx[q]), (int8_t)(y + qdy[q]));
-            var = d ? (fill2 ? WV_FILL2 : WV_FILL) : WV_INNER;
-        } else if (v) {
-            var = WV_VEDGE;
-        } else if (h) {
-            var = WV_HEDGE;
-        } else {
-            var = WV_OUTER;
-        }
-        q_t[q] = r_wall_tile[q * WALL_VARIANTS + var];
-        q_a[q] = PAL_WALL;
+    uint8_t y;
+    const uint8_t *src;
+    dst[0] = dst[SH + 1] = 1;
+    if (x < 0 || x >= cS->w) {
+        for (y = 1; y <= SH; y++) dst[y] = 1;
+        return;
     }
+    src = &cS->cell[SCELL(x, 0)];
+    for (y = 0; y < SH; y++) dst[y + 1] = (uint8_t)(src[y] == T_WALL);
 }
 
-static uint8_t crate_at(uint8_t c)
+/* a cheap per-cell hash: rows add 13, columns 7 (no multiply, no divide) */
+static uint8_t col_hash;
+#define HASH(y) ((uint8_t)(col_hash + (uint8_t)((y) * 13)))
+
+/* wall variant from (vertical neighbour, horizontal neighbour, diagonal) as v | h<<1 | d<<2 */
+static const uint8_t pick_tab[8] = {
+    WV_OUTER, WV_VEDGE, WV_HEDGE, WV_INNER, WV_OUTER, WV_VEDGE, WV_HEDGE, WV_FILL
+};
+
+static void wall_quarters(uint8_t y, uint8_t h)
 {
-    uint8_t i;
-    for (i = 0; i < MAX_CRATES; i++)
-        if (cS->o[SLOT_CRATE + i] == c && !(render_hide & (1u << i))) return 1;
-    return 0;
+    uint8_t r = (uint8_t)(y + 1), v;
+    uint8_t f2 = (uint8_t)(((h ^ (h >> 3)) & 7) == 0);    /* about one cell in eight */
+    v = pick_tab[wc[r - 1] | (wl[r] << 1) | (wl[r - 1] << 2)];
+    if (f2 && v == WV_FILL) v = WV_FILL2;
+    q_t[0] = r_wall_tile[0 * WALL_VARIANTS + v];
+    v = pick_tab[wc[r - 1] | (wr[r] << 1) | (wr[r - 1] << 2)];
+    if (f2 && v == WV_FILL) v = WV_FILL2;
+    q_t[1] = r_wall_tile[1 * WALL_VARIANTS + v];
+    v = pick_tab[wc[r + 1] | (wl[r] << 1) | (wl[r + 1] << 2)];
+    if (f2 && v == WV_FILL) v = WV_FILL2;
+    q_t[2] = r_wall_tile[2 * WALL_VARIANTS + v];
+    v = pick_tab[wc[r + 1] | (wr[r] << 1) | (wr[r + 1] << 2)];
+    if (f2 && v == WV_FILL) v = WV_FILL2;
+    q_t[3] = r_wall_tile[3 * WALL_VARIANTS + v];
+    q_a[0] = q_a[1] = q_a[2] = q_a[3] = PAL_WALL;
 }
 
-static uint8_t occupied(uint8_t c)
+static uint8_t cell_mt(uint8_t t, uint8_t y, uint8_t h)
 {
-    uint8_t i;
-    for (i = 0; i < NOBJ; i++)
-        if (cS->o[i] == c) return 1;
-    return 0;
-}
-
-static uint8_t cell_mt(uint8_t c)
-{
-    uint8_t t = cR->cell[c], x, y, h;
-    if (crate_at(c)) return MT_CRATE;
     switch (t) {
     case T_PLASMA: return MT_PLASMA;
-    case T_PHASE_P: return cS->g == G_DOWN ? MT_PHASE_P_ON : MT_PHASE_P_OFF;
-    case T_PHASE_G: return cS->g == G_UP ? MT_PHASE_G_ON : MT_PHASE_G_OFF;
-    case T_PLATE:
-        if (cR->cell[c + RW] == T_WALL || !(cR->cell[c - RW] == T_WALL))
-            return occupied(c) ? MT_PLATE_F_ON : MT_PLATE_F;
-        return occupied(c) ? MT_PLATE_C_ON : MT_PLATE_C;
-    case T_DOOR: return doors_open(cR, cS) ? MT_DOOR_OPEN : MT_DOOR_CLOSED;
-    case T_PICK0: case T_PICK1: case T_PICK2:
-        if (cS->got & (1u << (t - T_PICK0))) break;
-        return MT_CELL;
-    case T_ENTRY:
-        return cR->entry_side == SIDE_L ? MT_HATCH_L : cR->entry_side == SIDE_T ? MT_HATCH_T : MT_HATCH_B;
-    case T_EXIT:
-        if (cS->got == room_full(cR))
-            return cR->exit_side == SIDE_R ? MT_EXIT_R : cR->exit_side == SIDE_T ? MT_EXIT_U : MT_EXIT_D;
-        return cR->exit_side == SIDE_R ? MT_FIELD_V : MT_FIELD_H;
+    case T_PHASE_P: return MT_PHASE_P_ON;     /* (their art follows gravity: gfx_phase) */
+    case T_PHASE_G: return MT_PHASE_G_ON;
+    case T_CELL: return MT_CELL;
+    case T_CHECK: return render_checked ? MT_PLATE_F_ON : MT_PLATE_F;
+    case T_EXIT: return MT_EXIT_R;
+    case T_LASER: return MT_DOOR_CLOSED;      /* (blinks: gfx_laser) */
+    case T_GIRDER: return MT_BACK1;
     }
-    /* empty: now and then a little background machinery */
-    x = CX(c);
-    y = CY(c);
-    h = hash_xy(x, y);
-    if ((h & 15) == 3) return MT_BACK1;
-    if ((h & 15) == 9) return MT_BACK2;
-    if ((h & 31) == 14) return MT_BACK3;
+    /* empty: now and then a little background machinery, never right by a floor */
+    if ((h & 15) == 3 && !wc[y + 2] && !wc[y]) return MT_BACK2;
+    if ((h & 31) == 9) return MT_BACK3;
     return MT_EMPTY;
 }
 
-static void cell_quarters(uint8_t c)
+static void cell_quarters(const uint8_t *col, uint8_t y)
 {
-    uint8_t m, i;
-    if (cR->cell[c] == T_WALL) {
-        wall_quarters(CX(c), CY(c));
+    uint8_t m, t = col[y], h = HASH(y), p;
+    const uint8_t *mt;
+    if (t == T_WALL) {
+        wall_quarters(y, h);
         return;
     }
-    m = cell_mt(c);
-    for (i = 0; i < 4; i++) {
-        q_t[i] = r_mt_tiles[m * 4 + i];
-        q_a[i] = r_mt_pal[m];
+    m = cell_mt(t, y, h);
+    mt = &r_mt_tiles[m << 2];
+    p = r_mt_pal[m];
+    q_t[0] = mt[0];
+    q_t[1] = mt[1];
+    q_t[2] = mt[2];
+    q_t[3] = mt[3];
+    q_a[0] = q_a[1] = q_a[2] = q_a[3] = p;
+}
+
+static void flags_for(uint8_t cx)
+{
+    col_hash = (uint8_t)(cx * 7 + (uint8_t)cS->index * 5);
+    wall_flags(wl, (int16_t)cx - 1);
+    wall_flags(wc, cx);
+    wall_flags(wr, (int16_t)cx + 1);
+}
+
+static void build_column(const Stage *S, uint8_t cx)
+{
+    uint8_t y, r;
+    const uint8_t *col = &S->cell[SCELL(cx, 0)];
+    cS = S;
+    flags_for(cx);
+    for (y = 0; y < SH; y++) {
+        cell_quarters(col, y);
+        r = (uint8_t)(y * 2);
+        col_t[0][r] = q_t[0];
+        col_t[1][r] = q_t[1];
+        col_t[0][r + 1] = q_t[2];
+        col_t[1][r + 1] = q_t[3];
+        col_a[0][r] = q_a[0];
+        col_a[1][r] = q_a[1];
+        col_a[0][r + 1] = q_a[2];
+        col_a[1][r + 1] = q_a[3];
     }
 }
 
-void render_build(const Room *R, const State *s) BANKED
+static void store_column(uint8_t cx)
 {
-    uint8_t c, x, y;
-    uint16_t i;
-    cR = R;
-    cS = s;
-    for (c = 0; c < RN; c++) {
-        cell_quarters(c);
-        x = (uint8_t)(CX(c) * 2);
-        y = (uint8_t)(CY(c) * 2);
-        i = (uint16_t)y * ROOM_TW + x;
-        rbuf_t[i] = q_t[0];
-        rbuf_t[i + 1] = q_t[1];
-        rbuf_t[i + ROOM_TW] = q_t[2];
-        rbuf_t[i + ROOM_TW + 1] = q_t[3];
-        rbuf_a[i] = q_a[0];
-        rbuf_a[i + 1] = q_a[1];
-        rbuf_a[i + ROOM_TW] = q_a[2];
-        rbuf_a[i + ROOM_TW + 1] = q_a[3];
+    uint8_t *dst = (uint8_t *)(0xA000u + ((uint16_t)cx << 6));
+    ENABLE_RAM;
+    SWITCH_RAM(2);
+    memcpy(dst, col_t[0], 32);
+    memcpy(dst + 32, col_t[1], 32);
+    SWITCH_RAM(3);
+    memcpy(dst, col_a[0], 32);
+    memcpy(dst + 32, col_a[1], 32);
+}
+
+void render_prebuild(const Stage *S) BANKED
+{
+    uint8_t cx;
+    stream_on = 0;
+    for (cx = 0; cx < S->w; cx++) {
+        build_column(S, cx);
+        store_column(cx);
     }
 }
 
-void render_blit_all(uint8_t ox, uint8_t oy) BANKED
+void render_column(const Stage *S, uint8_t cx) BANKED
 {
-    uint8_t r;
-    for (r = 0; r < ROOM_TH; r++) render_blit_row(r, ox, oy);
+    (void)S;
+    col_push(cx);
 }
 
-void render_blit_row(uint8_t row, uint8_t ox, uint8_t oy) BANKED
+void render_cell(const Stage *S, uint8_t cx, uint8_t cy) BANKED
 {
-    uint8_t y = (uint8_t)((oy + row) & 31);
-    uint8_t first = (uint8_t)(32 - (ox & 31));
-    const uint8_t *t = rbuf_t + (uint16_t)row * ROOM_TW, *a = rbuf_a + (uint16_t)row * ROOM_TW;
-    ox &= 31;
-    if (first >= ROOM_TW) {
-        put_block(ox, y, ROOM_TW, 1, t, a);
-    } else {
-        put_block(ox, y, first, 1, t, a);
-        put_block(0, y, (uint8_t)(ROOM_TW - first), 1, t + first, a + first);
-    }
-}
-
-void render_blit_col(uint8_t col, uint8_t ox, uint8_t oy) BANKED
-{
-    uint8_t t[ROOM_TH], a[ROOM_TH], r, x = (uint8_t)((ox + col) & 31);
-    uint8_t first = (uint8_t)(32 - (oy & 31));
-    for (r = 0; r < ROOM_TH; r++) {
-        t[r] = rbuf_t[(uint16_t)r * ROOM_TW + col];
-        a[r] = rbuf_a[(uint16_t)r * ROOM_TW + col];
-    }
-    oy &= 31;
-    if (first >= ROOM_TH) {
-        put_block(x, oy, 1, ROOM_TH, t, a);
-    } else {
-        put_block(x, oy, 1, first, t, a);
-        put_block(x, 0, 1, (uint8_t)(ROOM_TH - first), t + first, a + first);
-    }
-}
-
-void render_cell(const Room *R, const State *s, uint8_t c) BANKED
-{
-    uint8_t x, y, tl[2], al[2];
-    cR = R;
-    cS = s;
-    cell_quarters(c);
-    x = (uint8_t)((room_ox + CX(c) * 2) & 31);
-    y = (uint8_t)((room_oy + CY(c) * 2) & 31);
-    tl[0] = q_t[0]; tl[1] = q_t[1];
-    al[0] = q_a[0]; al[1] = q_a[1];
-    if (x == 31) {
-        put_block(31, y, 1, 1, &tl[0], &al[0]);
-        put_block(0, y, 1, 1, &tl[1], &al[1]);
-    } else {
-        put_block(x, y, 2, 1, tl, al);
-    }
-    y = (uint8_t)((y + 1) & 31);
-    tl[0] = q_t[2]; tl[1] = q_t[3];
-    al[0] = q_a[2]; al[1] = q_a[3];
-    if (x == 31) {
-        put_block(31, y, 1, 1, &tl[0], &al[0]);
-        put_block(0, y, 1, 1, &tl[1], &al[1]);
-    } else {
-        put_block(x, y, 2, 1, tl, al);
-    }
-}
-
-void render_dynamic(const Room *R, const State *s) BANKED
-{
-    uint8_t c, t;
-    for (c = 0; c < RN; c++) {
-        t = R->cell[c];
-        if (t == T_PHASE_P || t == T_PHASE_G || t == T_DOOR || t == T_PLATE || t == T_EXIT)
-            render_cell(R, s, c);
-    }
+    /* only cells that turn into something simple change during play: an energy cell
+     * taken (empty) or the checkpoint lit; patch its 4 tiles in cartridge RAM and on the
+     * map, no column rebuild */
+    uint8_t x = (uint8_t)((cx * 2) & 31), y = (uint8_t)(cy * 2), on = stream_on, m, p;
+    uint8_t t = S->cell[SCELL(cx, cy)];
+    uint8_t *dst;
+    const uint8_t *mt;
+    m = t == T_CHECK ? (render_checked ? MT_PLATE_F_ON : MT_PLATE_F) : MT_EMPTY;
+    mt = &r_mt_tiles[m << 2];
+    p = r_mt_pal[m];
+    stream_on = 0;
+    dst = (uint8_t *)(0xA000u + ((uint16_t)cx << 6) + y);
+    ENABLE_RAM;
+    SWITCH_RAM(2);
+    dst[0] = mt[0];
+    dst[32] = mt[1];
+    dst[1] = mt[2];
+    dst[33] = mt[3];
+    SWITCH_RAM(3);
+    dst[0] = dst[32] = dst[1] = dst[33] = p;
+    stream_on = on;
+    q_t[0] = mt[0];
+    q_t[1] = mt[1];
+    q_t[2] = mt[2];
+    q_t[3] = mt[3];
+    q_a[0] = q_a[1] = q_a[2] = q_a[3] = p;
+    put_block(x, y, 2, 1, &q_t[0], &q_a[0]);
+    put_block(x, (uint8_t)(y + 1), 2, 1, &q_t[2], &q_a[2]);
 }

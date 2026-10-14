@@ -9,12 +9,13 @@ extern uint8_t joy, joy_prev, joy_new;
 
 /* sprite slots (8x8 OAM mode) */
 #define SP_MECH   0     /* 4 */
-#define SP_BOT    4     /* 2 x 4 */
-#define SP_CRATE  12    /* 2 x 4 */
-#define SP_PART   20    /* particles */
-#define NUM_PART  14
-#define SP_HINT   34
-#define SP_MISC   35    /* 5 misc */
+#define SP_ENEMY  4     /* 4 enemies x 4 */
+#define NUM_ESPR  4
+#define SP_ROD    20    /* a crusher's piston rod, 6 */
+#define NUM_ROD   6
+#define SP_PART   26    /* particles */
+#define NUM_PART  12
+#define SP_MISC   38    /* 2 misc */
 
 #define HUD_WY 136      /* the HUD is one window row at the bottom of the screen */
 
@@ -56,9 +57,21 @@ void fx_update(void);               /* once per frame: shake, flash, tile animat
 
 /* particles */
 void part_clear(void);
-void part_burst(uint8_t px, uint8_t py, uint8_t n, uint8_t tile, uint8_t pal, uint8_t speed, int8_t gravity);
-void part_spawn(uint8_t px, uint8_t py, int8_t vx, int8_t vy, uint8_t tile, uint8_t pal, uint8_t life);
+/* world pixel coordinates; speeds in 1/4 px a frame */
+extern uint16_t cam_x;
+extern uint8_t cam_y;
+void part_burst(uint16_t px, uint8_t py, uint8_t n, uint8_t tile, uint8_t pal, uint8_t speed, int8_t gravity);
+void part_spawn(uint16_t px, uint8_t py, int8_t vx, int8_t vy, uint8_t tile, uint8_t pal, uint8_t life);
 void part_update(void);
+
+/* stage streaming: stage column cx (prebuilt in cartridge RAM) copied to the BG map
+ * in VBlank, while stream_on */
+extern volatile uint8_t stream_on;
+void col_push(uint8_t cx);
+uint8_t col_queued(void);
+/* phase blocks show the gravity g; laser gates on / off */
+void gfx_phase(uint8_t g);
+void gfx_laser(uint8_t on);
 
 /* tile animations of the room art (plasma, cells, fields, exits, doors) */
 void anim_reset(void);

@@ -42,7 +42,7 @@ jobs:
       - name: Install PyBoy (headless Game Boy emulator for ROM tests)
         run: pip install pyboy pillow numpy
 
-      - name: Host unit tests (puzzle core + sound engine)
+      - name: Host unit tests (rules, solver, generator, sound engine)
         run: make test-host
 
       - name: Asset pipeline tests
@@ -54,21 +54,21 @@ jobs:
           echo "BUILD_DATE=$(date -u +%Y.%m.%d)" >> "$GITHUB_ENV"
           mkdir -p build
           date -u +%Y.%m.%d > build/build-date.txt
-          make rom BUILD_DATE="$(cat build/build-date.txt)"
+          make rom
 
-      - name: Emulator tests (DMG + CGB, plays real sectors)
+      - name: Emulator tests (DMG + CGB: same rooms as the host, solutions clear them)
         run: make test-rom
 
       - name: Generator statistics
-        run: build/ibgen stats 50 60 | tail -n 5
+        run: build/algen stats 10 60
 
       - name: Upload ROM and screenshots
         uses: actions/upload-artifact@v4
         with:
-          name: infinite-best-${{ github.sha }}
+          name: alignment-${{ github.sha }}
           path: |
-            build/infinite-best.gb
-            build/infinite-best.sym
+            build/alignment.gb
+            build/alignment.sym
             build/build-date.txt
             build/screens/*.png
 
@@ -87,7 +87,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: infinite-best-${{ github.sha }}
+          name: alignment-${{ github.sha }}
           path: dist
 
       - name: Publish release and prune all older ones
@@ -104,13 +104,13 @@ jobs:
           fi
 
           TAG="$(cat dist/build-date.txt)"
-          ROM="dist/infinite-best-${TAG}.gb"
-          cp dist/infinite-best.gb "$ROM"
+          ROM="dist/alignment-${TAG}.gb"
+          cp dist/alignment.gb "$ROM"
 
           cat > notes.md <<NOTES
-          **INFINITE BEST** build ${TAG} (commit ${GITHUB_SHA::7}).
+          **ALIGNMENT** build ${TAG} (commit ${GITHUB_SHA::7}).
 
-          Copy \`infinite-best-${TAG}.gb\` to your EverDrive SD card, see
+          Copy \`alignment-${TAG}.gb\` to your EverDrive SD card, see
           [docs/EVERDRIVE.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/EVERDRIVE.md).
           Runs on DMG, Pocket, Color, and GBC-compatible handhelds (colour + double speed on CGB).
           NOTES
@@ -120,12 +120,12 @@ jobs:
             # there is never a moment with no release.
             git tag -f "$TAG" "$GITHUB_SHA"
             git push -f origin "refs/tags/${TAG}"
-            gh release upload "$TAG" "$ROM" dist/infinite-best.sym --clobber
-            gh release edit "$TAG" --title "Infinite Best ${TAG}" --notes-file notes.md --latest
+            gh release upload "$TAG" "$ROM" dist/alignment.sym --clobber
+            gh release edit "$TAG" --title "Alignment ${TAG}" --notes-file notes.md --latest
           else
-            gh release create "$TAG" "$ROM" dist/infinite-best.sym \
+            gh release create "$TAG" "$ROM" dist/alignment.sym \
               --target "$GITHUB_SHA" \
-              --title "Infinite Best ${TAG}" \
+              --title "Alignment ${TAG}" \
               --notes-file notes.md \
               --latest
           fi

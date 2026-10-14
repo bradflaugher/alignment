@@ -7,7 +7,6 @@
 #include "gfx.h"
 #include "assets.h"
 #include "sound.h"
-#include "render.h"
 
 BANKREF_EXTERN(assets)
 
@@ -34,11 +33,117 @@ static uint8_t flash_t, flash_white;
 static volatile uint8_t pal_dirty;
 static uint8_t rnd_s = 0x5A;
 static uint8_t a_on;            /* tile animations run (room art loaded) */
+static uint8_t a_door_off;      /* the laser gates are off: their animation rests */
+
+/* ------------------------------------------------------------ streaming */
+
+/* The whole stage's tile map is built once (render_prebuild) into cartridge RAM: bank 2
+ * holds the tiles, bank 3 the CGB attributes, 64 bytes per stage column (two 32-tile map
+ * columns). Streaming a column is then a copy from there in VBlank. The game sets
+ * stream_on only while it is not using cartridge RAM itself. */
+#define COLQ 8
+static uint8_t cq_c[COLQ];
+static volatile uint8_t cq_head, cq_n;
+volatile uint8_t stream_on;
+
+uint8_t col_queued(void)
+{
+    return cq_n;
+}
+
+void col_push(uint8_t cx)
+{
+    while (cq_n >= COLQ) wait_vbl_done();
+    cq_c[(uint8_t)((cq_head + cq_n) & (COLQ - 1))] = cx;
+    cq_n++;
+}
+
+/* 32 bytes down a map column (stride 32): de = dst, bc = src (sdcccall 1) */
+static void copy_col(uint8_t *dst, const uint8_t *src) __naked
+{
+    (void)dst;
+    (void)src;
+    __asm
+        ld  h, d
+        ld  l, e
+        ld  e, #32
+    00001$:
+        ld  a, (bc)
+        inc bc
+        ld  (hl), a
+        ld  a, l
+        add a, #32
+        ld  l, a
+        jr  nc, 00002$
+        inc h
+    00002$:
+        dec e
+        jr  nz, 00001$
+        ret
+    __endasm;
+}
+
+static void col_write(void)
+{
+    uint8_t cx = cq_c[cq_head];
+    uint8_t *d = (uint8_t *)(0x9800u + ((cx << 1) & 31));
+    const uint8_t *src = (const uint8_t *)(0xA000u + ((uint16_t)cx << 6));
+    SWITCH_RAM(2);
+    copy_col(d, src);
+    copy_col(d + 1, src + 32);
+    if (is_cgb) {
+        SWITCH_RAM(3);
+        VBK_REG = 1;
+        copy_col(d, src);
+        copy_col(d + 1, src + 32);
+        VBK_REG = 0;
+    }
+    cq_head = (uint8_t)((cq_head + 1) & (COLQ - 1));
+    cq_n--;
+}
+
+/* 4-tile art copies (animations, phase / laser swaps), also done in VBlank: the
+ * source is in the art bank */
+#define TQ 4
+static const uint8_t *tq_src[TQ];
+static uint8_t *tq_dst[TQ];
+static volatile uint8_t tq_head, tq_n;
+
+static void tq_push(uint8_t tile, const uint8_t *src)
+{
+    uint8_t i;
+    while (tq_n >= TQ) wait_vbl_done();
+    i = (uint8_t)((tq_head + tq_n) & (TQ - 1));
+    tq_src[i] = src;
+    tq_dst[i] = (uint8_t *)(tile < 128 ? 0x9000u + ((uint16_t)tile << 4) : 0x8000u + ((uint16_t)tile << 4));
+    tq_n++;
+}
+
+static void tq_write(void)
+{
+    uint8_t b = CURRENT_BANK;
+    SWITCH_ROM(BANK(assets));
+    memcpy(tq_dst[tq_head], tq_src[tq_head], 64);
+    SWITCH_ROM(b);
+    tq_head = (uint8_t)((tq_head + 1) & (TQ - 1));
+    tq_n--;
+}
 
 /* ------------------------------------------------------------ VBlank */
 
 static void vbl_isr(void)
 {
+    /* a DMG's VBlank fits one column or one art copy; a Color's twice that */
+    if (cq_n && stream_on) {
+        col_write();
+        if (is_cgb) {
+            if (cq_n) col_write();
+            else if (tq_n) tq_write();
+        }
+    } else if (tq_n) {
+        tq_write();
+        if (is_cgb && tq_n) tq_write();
+    }
     frame++;
     SCX_REG = (uint8_t)(scroll_x + shake_x);
     SCY_REG = (uint8_t)(scroll_y + shake_y);
@@ -381,11 +486,15 @@ void fx_shake(uint8_t amount)
     if (amount > shake_amt) shake_amt = amount;
 }
 
+uint8_t dbg_fx[3];
 void fx_update(void)
 {
+    dbg_fx[0] = LY_REG;
     if (shake_amt) {
-        shake_x = (int8_t)((fx_rand() % (shake_amt * 2 + 1)) - shake_amt);
-        shake_y = (int8_t)((fx_rand() % (shake_amt * 2 + 1)) - shake_amt);
+        /* (masks, not %: a division costs a DMG a tenth of a frame) */
+        shake_x = (int8_t)((int8_t)(fx_rand() & 3) - 1);
+        shake_y = (int8_t)((int8_t)(fx_rand() & 3) - 1);
+        if (shake_amt > 2) { shake_x = (int8_t)(shake_x * 2); shake_y = (int8_t)(shake_y * 2); }
         if (!(frame & 1)) shake_amt--;
     } else {
         shake_x = shake_y = 0;
@@ -397,70 +506,108 @@ void fx_update(void)
         }
     }
     part_update();
+    dbg_fx[1] = LY_REG;
     anim_update();
+    dbg_fx[2] = LY_REG;
 }
 
 /* ------------------------------------------------------------ particles */
 
-static uint8_t p_life[NUM_PART], p_tile[NUM_PART], p_pal[NUM_PART];
-static int16_t p_x[NUM_PART], p_y[NUM_PART];    /* 8.4 fixed point screen coords */
-static int8_t p_vx[NUM_PART], p_vy[NUM_PART], p_g[NUM_PART];
+/* Particles live in world pixels and are drawn relative to the camera. Speeds are in
+ * 1/4 px a frame, kept in a 2-bit fraction; all the per-frame maths is 8-bit and the
+ * sprites are written straight into the shadow OAM. A DMG moves half of them each frame
+ * (twice as far): it can't afford all of them. */
+uint16_t cam_x;
+uint8_t cam_y;
+typedef struct {
+    uint8_t life;
+    uint8_t y;
+    uint16_t x;
+    int8_t vx, vy, g;
+    uint8_t f;          /* x fraction | y fraction << 2 */
+} Part;
+static Part part[NUM_PART];
 static uint8_t p_next;
 
 void part_clear(void)
 {
     uint8_t i;
     for (i = 0; i < NUM_PART; i++) {
-        p_life[i] = 0;
-        move_sprite((uint8_t)(SP_PART + i), 0, 0);
+        part[i].life = 0;
+        shadow_OAM[SP_PART + i].y = 0;
     }
 }
 
-void part_spawn(uint8_t px, uint8_t py, int8_t vx, int8_t vy, uint8_t tile, uint8_t pal, uint8_t life)
+void part_spawn(uint16_t px, uint8_t py, int8_t vx, int8_t vy, uint8_t tile, uint8_t pal, uint8_t life)
 {
-    uint8_t i = p_next;
-    p_next = (uint8_t)((p_next + 1) % NUM_PART);
-    p_x[i] = (int16_t)px << 4;
-    p_y[i] = (int16_t)py << 4;
-    p_vx[i] = vx;
-    p_vy[i] = vy;
-    p_g[i] = 0;
-    p_tile[i] = tile;
-    p_pal[i] = pal;
-    p_life[i] = life;
-    set_sprite_tile((uint8_t)(SP_PART + i), tile);
-    set_sprite_prop((uint8_t)(SP_PART + i), pal);
+    Part *p = &part[p_next];
+    OAM_item_t *o = &shadow_OAM[SP_PART + p_next];
+    if (++p_next == NUM_PART) p_next = 0;
+    p->x = px;
+    p->y = py;
+    p->f = 0;
+    p->vx = vx;
+    p->vy = vy;
+    p->g = 0;
+    p->life = life;
+    o->tile = tile;
+    o->prop = pal;
+    o->y = 0;
 }
 
-void part_burst(uint8_t px, uint8_t py, uint8_t n, uint8_t tile, uint8_t pal, uint8_t speed, int8_t gravity)
+void part_burst(uint16_t px, uint8_t py, uint8_t n, uint8_t tile, uint8_t pal, uint8_t speed, int8_t gravity)
 {
-    uint8_t k;
+    uint8_t mask = 1;
+    if (!is_cgb) n = (uint8_t)((n + 1) >> 1);
+    while (mask < speed) mask = (uint8_t)((mask << 1) | 1);    /* speed..2*speed, a power of two - 1 */
     while (n--) {
-        k = p_next;
-        part_spawn(px, py, (int8_t)((fx_rand() % (speed * 2 + 1)) - speed),
-                   (int8_t)((fx_rand() % (speed * 2 + 1)) - speed), tile, pal,
-                   (uint8_t)(14 + (fx_rand() & 15)));
-        p_g[k] = gravity;
+        Part *p = &part[p_next];
+        part_spawn(px, py, (int8_t)((int8_t)(fx_rand() & mask) - (int8_t)(mask >> 1)),
+                   (int8_t)((int8_t)(fx_rand() & mask) - (int8_t)(mask >> 1)),
+                   tile, pal, (uint8_t)(14 + (fx_rand() & 15)));
+        p->g = gravity;
     }
 }
 
 void part_update(void)
 {
-    uint8_t i, s;
-    for (i = 0; i < NUM_PART; i++) {
-        s = (uint8_t)(SP_PART + i);
-        if (!p_life[i]) continue;
-        if (!--p_life[i]) {
-            move_sprite(s, 0, 0);
+    uint8_t n, sy, step, fx, fy, life;
+    int8_t t, vx, vy;
+    uint16_t sx;
+    Part *p;
+    OAM_item_t *o;
+    step = is_cgb ? 1 : 2;
+    n = is_cgb ? 0 : (uint8_t)(frame & 1);
+    p = &part[n];
+    o = &shadow_OAM[SP_PART + n];
+    for (; n < NUM_PART; n += step, p += step, o += step) {
+        life = p->life;
+        if (!life) continue;
+        if (life <= step) {
+            p->life = 0;
+            o->y = 0;
             continue;
         }
-        p_x[i] += p_vx[i];
-        p_y[i] += p_vy[i];
-        if (p_g[i] && (frame & 1)) p_vy[i] = (int8_t)(p_vy[i] + p_g[i]);
-        if (p_life[i] < 6 && (frame & 1)) {
-            move_sprite(s, 0, 0);       /* flicker out */
+        p->life = life = (uint8_t)(life - step);
+        vx = p->vx;
+        vy = p->vy;
+        if (step == 2) { vx = (int8_t)(vx << 1); vy = (int8_t)(vy << 1); }
+        fx = (uint8_t)(p->f & 3);
+        fy = (uint8_t)(p->f >> 2);
+        t = (int8_t)(fx + vx);
+        p->x += (int8_t)(t >> 2);
+        fx = (uint8_t)(t & 3);
+        t = (int8_t)(fy + vy);
+        p->y = (uint8_t)(p->y + (int8_t)(t >> 2));
+        p->f = (uint8_t)(fx | ((t & 3) << 2));
+        if (p->g) p->vy = (int8_t)(p->vy + p->g);
+        sx = (uint16_t)(p->x - cam_x + 8);
+        sy = (uint8_t)(p->y - cam_y + 16);
+        if ((life < 6 && (frame & 2)) || sx > 168 || sy > 160) {
+            o->y = 0;
         } else {
-            move_sprite(s, (uint8_t)((p_x[i] >> 4) + 8 - shake_x), (uint8_t)((p_y[i] >> 4) + 16 - shake_y));
+            o->y = (uint8_t)(sy - shake_y);
+            o->x = (uint8_t)((uint8_t)sx - shake_x);
         }
     }
 }
@@ -493,17 +640,46 @@ void anim_update(void)
     if (!a_on) return;
     for (i = 0; i < NUM_ANIM; i++)
         if (a_timer[i] < 255) a_timer[i]++;
+    if (tq_n) return;               /* the copy queue is busy: next frame */
     for (n = 0; n < NUM_ANIM && !done; n++) {
         i = a_cursor;
-        a_cursor = (uint8_t)((a_cursor + 1) % NUM_ANIM);
+        if (++a_cursor == NUM_ANIM) a_cursor = 0;
         if (a_timer[i] < a_speed_r[i]) continue;
+        if (i == ANIM_DOOR && a_door_off) continue;
         a_timer[i] = 0;
-        a_frame[i] = (uint8_t)((a_frame[i] + 1) % a_frames_r[i]);
+        if (++a_frame[i] >= a_frames_r[i]) a_frame[i] = 0;
         {
             ASSETS_IN();
-            bg_tile_data(a_first[i], 4, anim_data[i] + ((uint16_t)a_frame[i] << 6));
+            tq_push(a_first[i], anim_data[i] + ((uint16_t)a_frame[i] << 6));
             ASSETS_OUT();
         }
         done = 1;
     }
+}
+
+/* ------------------------------------------------------------ tile swaps */
+
+/* Phase blocks are always drawn with their "on" tiles; when gravity turns, the art of
+ * those tile slots is swapped, so every block on screen changes at once. */
+static void copy_mt_art(uint8_t dst_mt, uint8_t src_mt)
+{
+    /* (both metatiles own 4 consecutive tiles) */
+    ASSETS_IN();
+    tq_push(mt_tiles[dst_mt * 4], art_tiles + ((uint16_t)(mt_tiles[src_mt * 4] - TILE_ART_BASE) << 4));
+    ASSETS_OUT();
+}
+
+void gfx_phase(uint8_t g)
+{
+    copy_mt_art(MT_PHASE_P_ON, g ? MT_PHASE_P_OFF : MT_PHASE_P_ON);
+    copy_mt_art(MT_PHASE_G_ON, g ? MT_PHASE_G_ON : MT_PHASE_G_OFF);
+}
+
+static uint8_t laser_shown = 1;
+void gfx_laser(uint8_t on)
+{
+    if (on == laser_shown) return;
+    laser_shown = on;
+    a_door_off = (uint8_t)!on;
+    copy_mt_art(MT_DOOR_CLOSED, on ? MT_DOOR_CLOSED : MT_DOOR_OPEN);
 }

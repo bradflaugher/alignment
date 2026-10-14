@@ -7,7 +7,7 @@ BUILD     := build
 OBJ       := $(BUILD)/obj
 ROM       := $(BUILD)/alignment.gb
 
-CORE_SRC  := src/core/room.c src/core/solver.c src/core/gen.c src/core/rng.c src/core/run.c
+CORE_SRC  := src/core/stage.c src/core/phys.c src/core/rng.c src/core/run.c
 CORE_HDR  := $(wildcard src/core/*.h)
 GB_SRC    := $(filter-out src/gb/assets.c src/gb/music_data.c,$(wildcard src/gb/*.c))
 GB_ASM    := $(wildcard src/gb/*.s)

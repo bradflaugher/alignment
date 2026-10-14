@@ -2,17 +2,16 @@
 #define AL_SAVE_H
 #include <stdint.h>
 #include <gb/gb.h>
-#include "../core/gen.h"
 
 typedef struct {
     uint8_t magic[2];       /* 'A','L' */
     uint8_t version;
-    uint16_t run_best_room; /* furthest room reached in a RUN */
-    uint16_t run_best_opt;  /* OPTIMAL clears in that run */
+    uint16_t best_stage;    /* furthest stage reached in a RUN */
+    uint32_t best_score;
     uint16_t zen_seed;
-    Door zen_door;          /* where the ZEN station walk resumes */
-    uint16_t total_opt;     /* lifetime OPTIMAL clears */
-    uint16_t total_rooms;   /* lifetime rooms cleared */
+    uint16_t zen_stage;     /* where the ZEN walk resumes */
+    uint16_t total_cells;   /* lifetime energy cells */
+    uint16_t total_stages;  /* lifetime stages cleared */
     uint8_t checksum;
 } SaveData;
 

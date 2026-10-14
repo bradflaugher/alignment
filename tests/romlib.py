@@ -5,18 +5,9 @@ from pyboy import PyBoy
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROM = os.path.join(ROOT, 'build', 'alignment.gb')
 SYM = os.path.join(ROOT, 'build', 'alignment.sym')
-ALGEN = os.path.join(ROOT, 'build', 'algen')
-RN = 90
-ROOM_PAR = 90 + 10      # offsetof(Room, par): cell[90] entry entry_side exit exit_side g0 npicks crate0[2] bot0[2] par
-ROOM_INDEX = 90 + 15
-SAVE_ZEN_SEED, SAVE_ZEN_DOOR = 7, 9
-
-
-def algen(*args):
-    out = subprocess.check_output([ALGEN] + [str(a) for a in args], text=True).split('\n')
-    nums = [int(x) for x in out[0].split()]
-    return {'par': nums[0], 'exit': nums[1], 'g0': nums[2], 'entry': nums[3], 'npicks': nums[4],
-            'flips': nums[5], 'cells': nums[6:6 + RN], 'objs': nums[6 + RN:], 'solution': out[1].strip()}
+MSGEN = os.path.join(ROOT, 'build', 'msgen')
+SAVE_ZEN_SEED, SAVE_ZEN_STAGE = 9, 11
+PS_CARD, PS_PLAY, PS_DEAD, PS_CLEAR, PS_PAUSE = range(5)
 
 
 class Game:
@@ -45,7 +36,7 @@ class Game:
         for _ in range(n):
             self.pb.tick()
 
-    def press(self, button, hold=2, after=2):
+    def press(self, button, hold=3, after=3):
         self.pb.button_press(button)
         self.run(hold)
         self.pb.button_release(button)
@@ -63,31 +54,16 @@ class Game:
         os.makedirs(d, exist_ok=True)
         self.pb.screen.image.save(os.path.join(d, '%s_%s.png' % (name, self.tag)))
 
-    def room_cells(self):
-        a = self.addr('room')
-        return [self.pb.memory[a + i] for i in range(RN)]
-
-    def start_zen(self, seed):
-        """Title -> ZEN WALK on a known seed, from room 1."""
-        self.run(120)
-        # first door: index 1, left side, cell (0,7), map (0,0)
+    def start_zen(self, seed, stage=1):
+        """Title -> ZEN on a known seed and stage; returns when the stage is playable."""
+        if self.pb.frame_count < 150:
+            self.run(150 - self.pb.frame_count)
         self.poke('save', SAVE_ZEN_SEED, [seed & 0xFF, seed >> 8])
-        self.poke('save', SAVE_ZEN_DOOR, [1, 0, 0, 70, 0, 0, 0, 0])
+        self.poke('save', SAVE_ZEN_STAGE, [stage & 0xFF, stage >> 8])
         self.press('start', after=10)
         self.press('down')
         self.press('a')
-        return self.wait(lambda: self.u8('play_idle') == 1, 6000)
+        return self.wait(lambda: self.u8('play_state') == PS_PLAY, 3000)
 
-    def play_moves(self, moves):
-        btn = {'L': 'left', 'R': 'right', 'F': 'a'}
-        for m in moves:
-            if not self.wait(lambda: self.u8('play_idle') == 1, 3000):
-                return False
-            # hold until the game takes the move (it reads the pad once a frame)
-            self.pb.button_press(btn[m])
-            ok = self.wait(lambda: self.u8('play_idle') == 0, 60)
-            self.pb.button_release(btn[m])
-            self.run(1)
-            if not ok:
-                return False
-        return True
+    def mech_xy(self):
+        return self.u16('mech') >> 4, self.u16('mech', 2) >> 4
