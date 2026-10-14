@@ -1,0 +1,36 @@
+; sector 7: the gravity vault - the thinking sector.
+; purple (P) holds you while gravity is down, green (G) while it is up: every room here
+; is a route that only exists in one gravity at a time.
+;  1 antechamber: fall up through the purple shelf, flip back and stand on it (an alcove of
+;    cells behind a purple door, walked through upside down)
+;  2 a ceiling turret over the corridor, a green trapdoor into a crawler's chamber, out
+;    hanging from the ceiling
+;  3 the bridge hall: green bridges under a plasma ceiling, purple bridges over a plasma
+;    floor, a ceiling crawler to flip onto
+;  4 checkpoint; a secret tunnel above it (in through purple, out through green) holds a shield
+;  5 the zipper: purple and green walls passed by flipping between them, the last pair in mid-air
+;  6 the vault: a lattice over plasma (hang under green, fall up through purple, flip, land),
+;    a gravity bomb on a ledge for the curious, a purple wall, a bonus shelf under the plasma
+;  7 repair and power shot, then the strongroom: a low vault room with a purple/green inner
+;    lock just inside the door - HIVE 2
+name: GRAVITY VAULT
+deck: 3
+speed: 2
+boss: HIVE 2
+map:
+################################################################################################################################
+###oo.P......#######################################.s..o.o.....############################~~~~~~~~~~~~~~######################
+###...P.=..=.#######################################..=..=..=...##################....=..v=......P.=......######################
+#######......-----.{......#################################G##P###################...............P........####............D..E.#
+#######........o..........################################.....|##################...............P....o.o.####..O......O..D..E.#
+#######...................########~~~~~~~~~~~~~~~~~~~~~###.....|##################..b.....o......P....PPP.####.....B......D..E.#
+#######...................########GGGGGGG~~~~GGGGGGG~~~###.O.O.|##################..PP..PPPP.....P........####............D..E.#
+#######PPPPPP#######GGGGGG####.*o...............k......###......##################...............P........####............D..E.#
+#######......#######...................................###.O.O..#############~~###.........GGGGGG#GGGG....####............D..E.#
+#######..o...#######..o......|####.....o..o...o......o..*.......--Po.G*..Po.P..G*........o.......P.ok.....####............D..E.#
+#*...........#######.........|####................................P..G...P..P..G..GGGGGG......o..P........---d............D..E.#
+#..O.O.......#######...o.....|####~~~~PPPPGPPPP~~~PPPPP###........P..G...P..P..G.....o......PPPPPP...........d............D..E.#
+#.S..........#######..........####~~~~~~~~~~~~~~~~~~~~~###........P..Go..P..P..G.................P.....o..rp.d............D..E.#
+####################.%..%..c..############################..C.....P..G...P..P..G...%%............P...PPPPP######################
+#######################################################################~~####~~######~~~~~~~~~~~~~~~~~~~~~######################
+################################################################################################################################
