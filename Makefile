@@ -29,13 +29,14 @@ GB_OBJS := $(patsubst src/core/%.c,$(OBJ)/core_%.o,$(CORE_SRC)) \
            $(OBJ)/assets.o $(OBJ)/music_data.o \
            $(patsubst src/gb/%.s,$(OBJ)/%_s.o,$(GB_ASM))
 
-FORCE:
-
 .PHONY: FORCE all rom assets music test test-host test-assets test-rom screenshots maps stats clean
 
 all: rom
 
 rom: $(ROM)
+
+# (below all: the first target is the default goal)
+FORCE:
 
 assets: src/gb/assets.c
 

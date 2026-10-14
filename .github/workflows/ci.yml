@@ -83,7 +83,8 @@ jobs:
       - name: Stage generator statistics
         run: build/msgen stats 50 60 | tail -n 3
 
-      - name: Upload ROM and screenshots
+      # the release job reads these from the artifact's root: keep them all under build/
+      - name: Upload ROM
         uses: actions/upload-artifact@v4
         with:
           name: alignment-${{ github.sha }}
@@ -91,10 +92,17 @@ jobs:
             build/alignment.gb
             build/alignment.sym
             build/build-date.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload screenshots and sector maps
+        uses: actions/upload-artifact@v4
+        with:
+          name: alignment-screens-${{ github.sha }}
+          path: |
             build/screens/*.png
             docs/screens/*.png
             docs/screens/*.gif
-          if-no-files-found: error
           retention-days: 30
 
   release:
