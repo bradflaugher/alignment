@@ -2,9 +2,10 @@
  *
  * Breadth-first search over mech states (position, speed, gravity, air flip...), where a
  * move is one of 9 inputs (left / right / nothing, each with or without a jump or a flip
- * pressed) held for a few frames. Enemies and laser gates are taken out (they are timing
- * obstacles with safe windows); the geometry, plasma and phase blocks are real. Also a
- * library: physbot_solve() is used by the tests and by msgen. */
+ * pressed) held for a few frames. Everything is real: the geometry, plasma, phase blocks,
+ * and the drones, crushers and laser gates on the stage clock (they all repeat every 512
+ * frames, so the clock modulo 512 is part of a state). Also a library: physbot_solve() is
+ * used by the tests and by msgen. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,21 +23,25 @@ typedef struct {
     uint32_t parent;
     uint8_t act;
     uint8_t jheld;      /* B was held at the end of this node's block */
+    uint16_t t;         /* the stage clock */
 } Node;
 
 static uint64_t *seen;
 static Node *q;
-/* best-first: a stack of node indices per pixel column, always taking the rightmost */
+/* best-first: a queue of node indices per pixel column, always taking the rightmost
+ * column, oldest first (so the path does not dawdle) */
 #define NB 2048
 static uint32_t *bnext;         /* next node in the same bucket */
-static uint32_t bhead[NB];
+static uint32_t bhead[NB], btail[NB];
 static int bmax;
 
 static void bpush(uint32_t i)
 {
     int b = q[i].m.x >> 8;
-    bnext[i] = bhead[b];
-    bhead[b] = i;
+    bnext[i] = 0xFFFFFFFFu;
+    if (bhead[b] == 0xFFFFFFFFu) bhead[b] = i;
+    else bnext[btail[b]] = i;
+    btail[b] = i;
     if (b > bmax) bmax = b;
 }
 
@@ -66,7 +71,7 @@ static uint64_t key_of(const Mech *m)
 
 static uint64_t key_node(const Node *n)
 {
-    return key_of(&n->m) ^ ((uint64_t)n->jheld << 45);
+    return key_of(&n->m) ^ ((uint64_t)n->jheld << 45) ^ ((uint64_t)((n->t >> 2) & 127) << 46);
 }
 
 static int insert(uint64_t k)
@@ -102,12 +107,13 @@ int physbot_solve(const Stage *src, unsigned *states, char *path, int pathmax)
     bmax = -1;
     memset(seen, 0, HASH_N * sizeof(uint64_t));
     memcpy(&S, src, sizeof(Stage));
-    S.nenemies = 0;
+    /* (pickups change nothing for the physics) */
     for (c = 0; c < (uint16_t)S.w * SH; c++)
-        if (S.cell[c] == T_LASER || S.cell[c] == T_CELL || S.cell[c] == T_CHECK) S.cell[c] = T_EMPTY;
+        if (S.cell[c] == T_CELL || S.cell[c] == T_CHECK) S.cell[c] = T_EMPTY;
     mech_spawn(&q[0].m, S.start_x, S.start_y, G_DOWN);
-    /* settle on the floor first */
-    for (f = 0; f < 20; f++) mech_step(&q[0].m, &S, 0, 0);
+    /* settle on the floor first, as the game does (with the clock stopped) */
+    for (f = 0; f < 24; f++) mech_step(&q[0].m, &S, 0, 0);
+    q[0].t = 0;
     q[0].parent = 0xFFFFFFFFu;
     q[0].jheld = 0;
     insert(key_node(&q[0]));
@@ -118,11 +124,12 @@ int physbot_solve(const Stage *src, unsigned *states, char *path, int pathmax)
             Node n;
             uint16_t ev = 0;
             n.m = q[qh].m;
+            n.t = q[qh].t;
             for (f = 0; f < HOLD; f++) {
                 uint8_t press = f == 0 ? acts[a][1] : 0;
                 /* a jump only starts on a fresh press of B, as on the Game Boy */
                 if ((press & IN_JUMP_NEW) && q[qh].jheld) press &= (uint8_t)~IN_JUMP_NEW;
-                ev = mech_step(&n.m, &S, (uint8_t)(acts[a][0] | press), 0);
+                ev = mech_step(&n.m, &S, (uint8_t)(acts[a][0] | press), ++n.t);
                 if (ev & (EV_DEAD | EV_EXIT)) break;
             }
             n.jheld = (uint8_t)((acts[a][0] & IN_JUMP) != 0);

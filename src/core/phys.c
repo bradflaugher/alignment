@@ -84,37 +84,73 @@ uint8_t laser_on(uint16_t t) CORE_BANKED
     return (uint8_t)(((t >> 3) & 15) < 9);        /* on 72 frames, off 56 */
 }
 
+/* 8 x 8 -> 16 bit multiply: SDCC would widen to a 16-bit multiply (slow on a DMG) */
+#ifdef __SDCC
+static uint16_t mul8(uint8_t a, uint8_t b) __naked
+{
+    (void)a;
+    (void)b;
+    __asm
+        ld  hl, #0
+        ld  c, a
+        ld  b, #0
+    00001$:
+        srl e
+        jr  nc, 00002$
+        add hl, bc
+    00002$:
+        jr  z, 00003$
+        sla c
+        rl  b
+        jr  00001$
+    00003$:
+        ld  b, h
+        ld  c, l
+        ret
+    __endasm;
+}
+#else
+static uint16_t mul8(uint8_t a, uint8_t b)
+{
+    return (uint16_t)(a * b);
+}
+#endif
+
 /* a triangle wave on an 8-bit phase: 0..len..0 every 256 steps (no division) */
-static uint16_t tri(uint8_t ph, uint16_t len)
+static uint16_t tri(uint8_t ph, uint8_t len)
 {
     uint8_t t = ph < 128 ? ph : (uint8_t)(255 - ph);
-    return (uint16_t)((t * len) >> 7);
+    return (uint16_t)(mul8(t, len) >> 7);
 }
 
 void enemy_pos(const Enemy *e, uint16_t t, uint16_t *px, uint8_t *py, uint8_t *len) CORE_BANKED
 {
-    uint16_t tt = (uint16_t)(t + (uint16_t)e->phase * 4);
-    uint8_t ct, ph = (uint8_t)((uint16_t)(tt * e->speed) >> 1);
-    uint16_t range;
+    uint16_t tt = (uint16_t)(t + ((uint16_t)e->phase << 2));
+    uint8_t ct, ph, range;
+    /* tt * speed (1..3) */
+    if (e->speed == 2) tt <<= 1;
+    else if (e->speed == 3) tt = (uint16_t)(tt + (tt << 1));
+    ph = (uint8_t)(tt >> 1);
     *len = 0;
+    *px = (uint16_t)e->x0 << 4;
+    *py = (uint8_t)(e->y0 << 4);
     switch (e->kind) {
     case E_CRAWLER:
-        *px = (uint16_t)(e->x0 * 16 + tri(ph, (uint16_t)((e->x1 - e->x0) * 16)));
-        *py = (uint8_t)(e->y0 * 16);
+        *px += tri(ph, (uint8_t)((e->x1 - e->x0) << 4));
         break;
     case E_HOVER:
-        *px = (uint16_t)(e->x0 * 16);
-        *py = (uint8_t)(e->y0 * 16 + tri(ph, (uint16_t)((e->y1 - e->y0) * 16)));
+        *py = (uint8_t)(*py + tri(ph, (uint8_t)((e->y1 - e->y0) << 4)));
         break;
     default: /* E_CRUSHER: rest, slam, hold, pull back up */
-        *px = (uint16_t)(e->x0 * 16);
-        *py = (uint8_t)(e->y0 * 16);
-        range = (uint16_t)((e->y1 - e->y0) * 16);
-        ct = (uint8_t)((tt * e->speed) & 127);
+        range = (uint8_t)((e->y1 - e->y0) << 4);
+        ct = (uint8_t)(tt & 127);
         if (ct < 60) *len = 0;
-        else if (ct < 68) *len = (uint8_t)((range * (uint8_t)(ct - 60)) >> 3);
-        else if (ct < 92) *len = (uint8_t)range;
-        else *len = (uint8_t)((range * (uint8_t)(127 - ct) * 7) >> 8);
+        else if (ct < 68) *len = (uint8_t)(mul8(range, (uint8_t)(ct - 60)) >> 3);
+        else if (ct < 92) *len = range;
+        else {
+            uint16_t v = mul8(range, (uint8_t)(127 - ct));
+            *len = (uint8_t)((uint16_t)((v << 3) - v) >> 8);
+        }
         break;
     }
 }
@@ -283,8 +319,8 @@ moved:
     }
     {
         uint8_t mcx = (uint8_t)(px >> 4);
-    for (i = 0; i < S->nenemies && !m->dead; i++) {
-        const Enemy *e = &S->enemy[i];
+        const Enemy *e = S->enemy;
+    for (i = S->nenemies; i && !m->dead; i--, e++) {
         uint16_t ex;
         uint8_t eyy;
         if ((uint8_t)(e->x1 + 2) < mcx || e->x0 > (uint8_t)(mcx + 2)) continue;

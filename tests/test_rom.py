@@ -38,7 +38,7 @@ class Stages(unittest.TestCase):
             self.assertTrue(g.wait(lambda: g.u8('play_state') != PS_PLAY, 20000), 'stage %d never ended' % n)
             self.assertEqual(g.u16('run', 13), deaths0, 'the mech died on stage %d' % n)
             self.assertEqual(g.u8('play_state'), PS_CLEAR, 'stage %d not cleared' % n)
-            self.assertLessEqual(g.u16('play_lag') - lag0, 2, 'missed frames on stage %d' % n)
+            self.assertEqual(g.u16('play_lag') - lag0, 0, 'missed frames on stage %d' % n)
             load_demo(g, bot_path(n + 1))
             self.assertTrue(g.wait(lambda: g.u16('run', 3) == n + 1 and g.u8('play_state') == PS_PLAY, 3000))
         g.shot('stage%d' % (stages + 1))

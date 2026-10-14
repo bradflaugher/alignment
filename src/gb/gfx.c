@@ -26,7 +26,11 @@ uint8_t r_mt_pal[NUM_MT];
 
 static uint16_t bg_pal[8 * 4];
 static uint16_t spr_pal[8 * 4];
+uint8_t hud_t[20], hud_a[20];
+static volatile uint8_t row_dirty;
 static uint16_t out_pal[8 * 4];
+static uint16_t out_spr[8 * 4];
+static uint8_t spr_level, spr_force = 1;
 static uint8_t fade_level;
 static uint8_t shake_amt;
 static uint8_t flash_t, flash_white;
@@ -133,8 +137,17 @@ static void tq_write(void)
 
 static void vbl_isr(void)
 {
-    /* a DMG's VBlank fits one column or one art copy; a Color's twice that */
-    if (cq_n && stream_on) {
+    /* a DMG's VBlank fits one column or one art copy or the HUD row; a Color's twice that */
+    if (row_dirty) {
+        uint8_t *d = (uint8_t *)0x9C00u, i;
+        for (i = 0; i < 20; i++) d[i] = hud_t[i];
+        if (is_cgb) {
+            VBK_REG = 1;
+            for (i = 0; i < 20; i++) d[i] = hud_a[i];
+            VBK_REG = 0;
+        }
+        row_dirty = 0;
+    } else if (cq_n && stream_on) {
         col_write();
         if (is_cgb) {
             if (cq_n) col_write();
@@ -148,7 +161,9 @@ static void vbl_isr(void)
     SCX_REG = (uint8_t)(scroll_x + shake_x);
     SCY_REG = (uint8_t)(scroll_y + shake_y);
     if (pal_dirty && is_cgb) {
+        /* (both palettes are written here, in VBlank, so nobody waits for one) */
         set_bkg_palette(0, 8, out_pal);
+        if (pal_dirty & 2) set_sprite_palette(0, 8, out_spr);
         pal_dirty = 0;
     }
     sound_tick();
@@ -215,6 +230,7 @@ static void load_common(void)
     memcpy(r_mt_pal, mt_cgb_pal, sizeof(r_mt_pal));
     memcpy(bg_pal, bg_cgb_pal, sizeof(bg_pal));
     memcpy(spr_pal, spr_cgb_pal, sizeof(spr_pal));
+    spr_force = 1;
     ASSETS_OUT();
 }
 
@@ -290,6 +306,11 @@ void gfx_init(void)
 
 /* ------------------------------------------------------------ text */
 
+void hud_commit(void)
+{
+    row_dirty = 1;
+}
+
 static void put_tiles(uint8_t win, uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t *t)
 {
     if (win) set_win_tiles(x, y, w, h, t);
@@ -340,13 +361,19 @@ void txt(uint8_t win, uint8_t x, uint8_t y, const char *s, uint8_t pal)
 
 void txt_num(uint8_t win, uint8_t x, uint8_t y, uint16_t v, uint8_t digits, uint8_t pal)
 {
+    /* digits by subtraction (a 16-bit division costs a DMG ten scanlines) */
+    static const uint16_t p10[6] = { 1, 10, 100, 1000, 10000, 0 };
     char b[6];
-    uint8_t i = digits;
+    uint8_t i = digits, d;
+    uint16_t p;
     if (i > 5) i = 5;
+    for (d = 4; d >= i && d < 5; d--) while (v >= p10[d]) v -= p10[d];   /* keep the low digits */
     b[i] = 0;
-    while (i--) {
-        b[i] = (char)('0' + v % 10);
-        v /= 10;
+    for (d = 0; d < i; d++) {
+        char c = '0';
+        p = p10[i - 1 - d];
+        while (v >= p) { v -= p; c++; }
+        b[d] = c;
     }
     txt(win, x, y, b, pal);
 }
@@ -439,12 +466,14 @@ void pal_apply(void)
         if (flash_t && (i & 3)) c = flash_white ? 0x7FFF : c | 0x1084;
         out_pal[i] = fade_level ? scale(c, fade_level) : c;
     }
-    pal_dirty = 1;
-    {
-        uint16_t sp[32];
-        for (i = 0; i < 32; i++) sp[i] = fade_level ? scale(spr_pal[i], fade_level) : spr_pal[i];
-        wait_vbl_done();
-        set_sprite_palette(0, 8, sp);
+    /* sprites only change with the fade (a flash leaves them be) */
+    if (spr_level != fade_level || spr_force) {
+        spr_level = fade_level;
+        spr_force = 0;
+        for (i = 0; i < 32; i++) out_spr[i] = fade_level ? scale(spr_pal[i], fade_level) : spr_pal[i];
+        pal_dirty = 3;
+    } else {
+        pal_dirty |= 1;
     }
 }
 
@@ -486,10 +515,8 @@ void fx_shake(uint8_t amount)
     if (amount > shake_amt) shake_amt = amount;
 }
 
-uint8_t dbg_fx[3];
 void fx_update(void)
 {
-    dbg_fx[0] = LY_REG;
     if (shake_amt) {
         /* (masks, not %: a division costs a DMG a tenth of a frame) */
         shake_x = (int8_t)((int8_t)(fx_rand() & 3) - 1);
@@ -506,9 +533,7 @@ void fx_update(void)
         }
     }
     part_update();
-    dbg_fx[1] = LY_REG;
     anim_update();
-    dbg_fx[2] = LY_REG;
 }
 
 /* ------------------------------------------------------------ particles */
@@ -519,15 +544,21 @@ void fx_update(void)
  * (twice as far): it can't afford all of them. */
 uint16_t cam_x;
 uint8_t cam_y;
+/* particles: positions in 1/4 px, velocities in 1/4 px per frame; the update is
+ * hand-written (the C version cost a DMG a fifth of a frame) and relies on this layout */
 typedef struct {
     uint8_t life;
-    uint8_t y;
+    int8_t vx;
     uint16_t x;
-    int8_t vx, vy, g;
-    uint8_t f;          /* x fraction | y fraction << 2 */
+    int8_t g;
+    int8_t vy;
+    uint16_t y;
 } Part;
 static Part part[NUM_PART];
 static uint8_t p_next;
+static uint16_t pk_x;       /* screen x = (x >> 2) - pk_x */
+static uint8_t pk_y, pk_blink, p_count;
+static OAM_item_t *p_oam;
 
 void part_clear(void)
 {
@@ -543,9 +574,8 @@ void part_spawn(uint16_t px, uint8_t py, int8_t vx, int8_t vy, uint8_t tile, uin
     Part *p = &part[p_next];
     OAM_item_t *o = &shadow_OAM[SP_PART + p_next];
     if (++p_next == NUM_PART) p_next = 0;
-    p->x = px;
-    p->y = py;
-    p->f = 0;
+    p->x = px << 2;
+    p->y = (uint16_t)py << 2;
     p->vx = vx;
     p->vy = vy;
     p->g = 0;
@@ -557,59 +587,167 @@ void part_spawn(uint16_t px, uint8_t py, int8_t vx, int8_t vy, uint8_t tile, uin
 
 void part_burst(uint16_t px, uint8_t py, uint8_t n, uint8_t tile, uint8_t pal, uint8_t speed, int8_t gravity)
 {
-    uint8_t mask = 1;
+    /* written out (no part_spawn calls, 8-bit maths only): a burst lands on a busy frame */
+    uint8_t mask = 1, half, i = p_next;
+    uint16_t x4 = px << 2, y4 = (uint16_t)py << 2;
+    Part *p = &part[i];
+    OAM_item_t *o = &shadow_OAM[SP_PART + i];
     if (!is_cgb) n = (uint8_t)((n + 1) >> 1);
     while (mask < speed) mask = (uint8_t)((mask << 1) | 1);    /* speed..2*speed, a power of two - 1 */
+    half = (uint8_t)(mask >> 1);
     while (n--) {
-        Part *p = &part[p_next];
-        part_spawn(px, py, (int8_t)((int8_t)(fx_rand() & mask) - (int8_t)(mask >> 1)),
-                   (int8_t)((int8_t)(fx_rand() & mask) - (int8_t)(mask >> 1)),
-                   tile, pal, (uint8_t)(14 + (fx_rand() & 15)));
+        uint8_t r = fx_rand();
+        p->x = x4;
+        p->y = y4;
+        p->vx = (int8_t)(uint8_t)((r & mask) - half);
+        p->vy = (int8_t)(uint8_t)(((uint8_t)((r >> 4) | (r << 4)) & mask) - half);
         p->g = gravity;
+        p->life = (uint8_t)(14 + (r & 15));
+        o->tile = tile;
+        o->prop = pal;
+        o->y = 0;
+        p++;
+        o++;
+        if (++i == NUM_PART) {
+            i = 0;
+            p = part;
+            o = &shadow_OAM[SP_PART];
+        }
     }
+    p_next = i;
+}
+
+static void part_asm(void) __naked
+{
+    __asm
+        ld  hl, #_part
+        ld  a, #NUM_PART
+        ld  (_p_count), a
+        ld  a, #<(_shadow_OAM + SP_PART * 4)
+        ld  (_p_oam), a
+        ld  a, #>(_shadow_OAM + SP_PART * 4)
+        ld  (_p_oam + 1), a
+    00001$:
+        push hl
+        ld  a, (hl)
+        or  a
+        jp  z, 00008$
+        dec a
+        ld  (hl+), a
+        jp  z, 00007$
+        ; x += vx
+        ld  a, (hl+)
+        ld  c, a
+        rlca
+        sbc a, a
+        ld  b, a
+        ld  a, c
+        add a, (hl)
+        ld  (hl+), a
+        ld  a, b
+        adc a, (hl)
+        ld  (hl+), a
+        ; vy += g
+        ld  a, (hl+)
+        add a, (hl)
+        ld  (hl+), a
+        ; y += vy
+        ld  c, a
+        rlca
+        sbc a, a
+        ld  b, a
+        ld  a, c
+        add a, (hl)
+        ld  (hl+), a
+        ld  c, a
+        ld  a, b
+        adc a, (hl)
+        ld  b, a
+        ld  (hl), a
+        ; screen y
+        ld  a, c
+        srl b
+        rra
+        srl b
+        rra
+        inc b
+        dec b
+        jp  nz, 00007$
+        ld  hl, #_pk_y
+        sub a, (hl)
+        cp  a, #161
+        jp  nc, 00007$
+        ld  c, a
+        ; screen x
+        pop hl
+        push hl
+        inc hl
+        inc hl
+        ld  a, (hl+)
+        ld  b, (hl)
+        srl b
+        rra
+        srl b
+        rra
+        ld  hl, #_pk_x
+        sub a, (hl)
+        ld  e, a
+        inc hl
+        ld  a, b
+        sbc a, (hl)
+        jp  nz, 00007$
+        ld  a, e
+        cp  a, #169
+        jp  nc, 00007$
+        ; fading out: blink
+        pop hl
+        push hl
+        ld  a, (hl)
+        cp  a, #6
+        jr  nc, 00005$
+        ld  a, (_pk_blink)
+        or  a
+        jr  nz, 00007$
+    00005$:
+        ld  hl, #_p_oam
+        ld  a, (hl+)
+        ld  h, (hl)
+        ld  l, a
+        ld  (hl), c
+        inc hl
+        ld  (hl), e
+        jr  00008$
+    00007$:
+        ld  hl, #_p_oam
+        ld  a, (hl+)
+        ld  h, (hl)
+        ld  l, a
+        ld  (hl), #0
+    00008$:
+        ld  hl, #_p_oam
+        ld  a, (hl)
+        add a, #4
+        ld  (hl+), a
+        jr  nc, 00009$
+        inc (hl)
+    00009$:
+        pop hl
+        ld  de, #8
+        add hl, de
+        ld  a, (_p_count)
+        dec a
+        ld  (_p_count), a
+        jp  nz, 00001$
+        ret
+    __endasm;
 }
 
 void part_update(void)
 {
-    uint8_t n, sy, step, fx, fy, life;
-    int8_t t, vx, vy;
-    uint16_t sx;
-    Part *p;
-    OAM_item_t *o;
-    step = is_cgb ? 1 : 2;
-    n = is_cgb ? 0 : (uint8_t)(frame & 1);
-    p = &part[n];
-    o = &shadow_OAM[SP_PART + n];
-    for (; n < NUM_PART; n += step, p += step, o += step) {
-        life = p->life;
-        if (!life) continue;
-        if (life <= step) {
-            p->life = 0;
-            o->y = 0;
-            continue;
-        }
-        p->life = life = (uint8_t)(life - step);
-        vx = p->vx;
-        vy = p->vy;
-        if (step == 2) { vx = (int8_t)(vx << 1); vy = (int8_t)(vy << 1); }
-        fx = (uint8_t)(p->f & 3);
-        fy = (uint8_t)(p->f >> 2);
-        t = (int8_t)(fx + vx);
-        p->x += (int8_t)(t >> 2);
-        fx = (uint8_t)(t & 3);
-        t = (int8_t)(fy + vy);
-        p->y = (uint8_t)(p->y + (int8_t)(t >> 2));
-        p->f = (uint8_t)(fx | ((t & 3) << 2));
-        if (p->g) p->vy = (int8_t)(p->vy + p->g);
-        sx = (uint16_t)(p->x - cam_x + 8);
-        sy = (uint8_t)(p->y - cam_y + 16);
-        if ((life < 6 && (frame & 2)) || sx > 168 || sy > 160) {
-            o->y = 0;
-        } else {
-            o->y = (uint8_t)(sy - shake_y);
-            o->x = (uint8_t)((uint8_t)sx - shake_x);
-        }
-    }
+    pk_x = (uint16_t)(cam_x - 8 + shake_x);
+    pk_y = (uint8_t)(cam_y - 16 + shake_y);
+    pk_blink = (uint8_t)(frame & 2);
+    part_asm();
 }
 
 /* ------------------------------------------------------------ tile animations */

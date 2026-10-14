@@ -34,6 +34,9 @@ void bg_tile_data(uint8_t first, uint8_t n, const uint8_t *src);
 void txt(uint8_t win, uint8_t x, uint8_t y, const char *s, uint8_t pal);
 void txt_num(uint8_t win, uint8_t x, uint8_t y, uint16_t v, uint8_t digits, uint8_t pal);
 void txt_hex(uint8_t win, uint8_t x, uint8_t y, uint16_t v, uint8_t pal);
+/* the HUD: window row 0, edited here and copied in the next VBlank by hud_commit() */
+extern uint8_t hud_t[20], hud_a[20];
+void hud_commit(void);
 void put_tile(uint8_t win, uint8_t x, uint8_t y, uint8_t tile, uint8_t pal);
 void gfill(uint8_t win, uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint8_t tile, uint8_t pal);
 void draw_box(uint8_t win, uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint8_t pal);

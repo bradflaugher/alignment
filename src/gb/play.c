@@ -19,10 +19,7 @@ uint16_t stage_t;           /* the stage clock: enemies and lasers run on it */
 uint8_t play_state;         /* PS_*: what the game is doing */
 uint16_t play_lag;          /* frames the loop missed (the ROM tests check it stays 0) */
 uint8_t play_ly;            /* the scanline the last frame's work ended on (tests) */
-static uint8_t last_frame;
-uint8_t dbg_ly[8];
-uint8_t dbg_f[8];           /* frame counter at the same points */
-uint8_t dbg_q[4];          /* scanline after each part of the frame (profiling) */
+static uint8_t last_frame, lag_armed;
 
 enum { PS_CARD = 0, PS_PLAY, PS_DEAD, PS_CLEAR, PS_PAUSE };
 
@@ -31,6 +28,8 @@ static uint8_t checked;             /* the checkpoint has been reached */
 static uint8_t col_lo, col_hi;      /* stage columns currently in the BG ring */
 static uint8_t pose, pose_t;        /* mech animation */
 static uint8_t hud_cells, hud_lives, hud_bar, hud_g;
+static uint8_t hud_thr[8];
+static uint8_t fx_pend, fxp_x, fxp_y;   /* effects waiting for a quiet frame (fx_deferred) */     /* column where the progress bar reaches each half step */
 static uint8_t laser_was;
 static uint8_t hud_msg_t;           /* a message is up in the HUD for this many frames */
 static uint8_t mech_hidden;
@@ -89,62 +88,98 @@ static void hide4(uint8_t slot)
 
 /* ------------------------------------------------------------------ HUD */
 
+/* the HUD is one window row kept in hud_t / hud_a and copied in VBlank (hud_commit):
+ * a few byte stores here, no mid-frame VRAM waits, no generic text code */
+#define HUD_CH(c) FONT_TILE(c)
+
+static void hud_digits(uint8_t x, uint8_t v, uint8_t pal)
+{
+    uint8_t tens = 0;
+    while (v >= 10) { v -= 10; tens++; }
+    if (tens > 9) tens = 9;
+    hud_t[x] = (uint8_t)(HUD_CH('0') + tens);
+    hud_t[x + 1] = (uint8_t)(HUD_CH('0') + v);
+    hud_a[x] = hud_a[x + 1] = pal;
+}
+
+static void hud_clear(uint8_t pal)
+{
+    uint8_t i;
+    for (i = 0; i < 20; i++) {
+        hud_t[i] = TILE_BLANK;
+        hud_a[i] = pal;
+    }
+}
+
 static void hud_full(void)
 {
-    gfill(1, 0, 0, 20, 1, TILE_BLANK, PAL_UI);
-    txt(1, 1, 0, "S", PAL_DIM);
-    txt_num(1, 2, 0, run.stage > 99 ? 99 : run.stage, 2, PAL_UI);
-    put_tile(1, 5, 0, UI_BOLT, PAL_GREEN);
-    put_tile(1, 9, 0, UI_CELL, PAL_GREEN);
-    txt(1, 12, 0, "/", PAL_DIM);
-    txt_num(1, 13, 0, stage.ncells, 2, PAL_DIM);
+    hud_clear(PAL_UI);
+    hud_t[1] = HUD_CH('S');
+    hud_a[1] = PAL_DIM;
+    hud_digits(2, run.stage > 99 ? 99 : (uint8_t)run.stage, PAL_UI);
+    hud_t[5] = UI_BOLT;
+    hud_a[5] = PAL_GREEN;
+    hud_t[9] = UI_CELL;
+    hud_a[9] = PAL_GREEN;
+    hud_t[12] = HUD_CH('/');
+    hud_a[12] = PAL_DIM;
+    hud_digits(13, stage.ncells, PAL_DIM);
+    hud_commit();
     hud_cells = hud_lives = hud_bar = hud_g = 0xFF;
 }
 
 static void hud_update(void)
 {
-    /* one item per frame at most: each is a few STAT-safe VRAM writes */
+    /* one item per frame at most */
     uint8_t b, i, t;
     if (hud_g != mech.g) {
         hud_g = mech.g;
-        put_tile(1, 0, 0, mech.g ? UI_GRAV_UP : UI_GRAV_DOWN, mech.g ? PAL_GREEN : PAL_PURPLE);
+        hud_t[0] = mech.g ? UI_GRAV_UP : UI_GRAV_DOWN;
+        hud_a[0] = mech.g ? PAL_GREEN : PAL_PURPLE;
+        hud_commit();
         return;
     }
     if (hud_lives != run.lives) {
         hud_lives = run.lives;
-        if (run.mode == MODE_ZEN) txt(1, 6, 0, "ZN", PAL_GREEN);
-        else txt_num(1, 6, 0, run.lives, 2, run.lives <= 1 ? PAL_HAZARD : PAL_UI);
+        if (run.mode == MODE_ZEN) {
+            hud_t[6] = HUD_CH('Z');
+            hud_t[7] = HUD_CH('N');
+            hud_a[6] = hud_a[7] = PAL_GREEN;
+        } else {
+            hud_digits(6, run.lives, run.lives <= 1 ? PAL_HAZARD : PAL_UI);
+        }
+        hud_commit();
         return;
     }
     if (hud_cells != run.stage_cells) {
         hud_cells = run.stage_cells;
-        txt_num(1, 10, 0, run.stage_cells, 2, run.stage_cells >= stage.ncells ? PAL_GREEN : PAL_UI);
+        hud_digits(10, run.stage_cells, run.stage_cells >= stage.ncells ? PAL_GREEN : PAL_UI);
+        hud_commit();
         return;
     }
     if (frame & 7) return;
     /* progress through the stage: 4 tiles, half steps */
-    b = (uint8_t)(((uint16_t)(mech_px() >> 4) * 8) / stage.w);
+    b = 0;
+    t = (uint8_t)(mech_px() >> 4);
+    while (b < 8 && t >= hud_thr[b]) b++;
     if (b != hud_bar) {
-        uint8_t row[4], pal[4];
         hud_bar = b;
         for (i = 0; i < 4; i++) {
-            t = b >= (uint8_t)(i * 2 + 2) ? UI_BAR_FULL : b == (uint8_t)(i * 2 + 1) ? UI_BAR_HALF : UI_BAR_EMPTY;
-            row[i] = t;
-            pal[i] = PAL_PURPLE;
+            t = (uint8_t)(i * 2);
+            hud_t[16 + i] = b >= (uint8_t)(t + 2) ? UI_BAR_FULL : b == (uint8_t)(t + 1) ? UI_BAR_HALF : UI_BAR_EMPTY;
+            hud_a[16 + i] = PAL_PURPLE;
         }
-        if (is_cgb) {
-            VBK_REG = 1;
-            set_win_tiles(16, 0, 4, 1, pal);
-            VBK_REG = 0;
-        }
-        set_win_tiles(16, 0, 4, 1, row);
+        hud_commit();
     }
 }
 
 static void hud_msg(const char *s, uint8_t pal)
 {
-    gfill(1, 0, 0, 20, 1, TILE_BLANK, pal);
-    txt(1, (uint8_t)((20 - strlen(s)) / 2), 0, s, pal);
+    uint8_t n = (uint8_t)strlen(s), x;
+    if (n > 20) n = 20;
+    hud_clear(pal);
+    for (x = (uint8_t)((20 - n) >> 1); *s && x < 20; x++, s++) hud_t[x] = HUD_CH(*s);
+    hud_commit();
     hud_cells = hud_lives = hud_bar = hud_g = 0xFF;
 }
 
@@ -257,39 +292,46 @@ static void draw_mech(void)
 
 static void draw_enemies(void)
 {
-    uint8_t i, n = 0, len, slot, k, rods = 0;
+    /* the stage's enemies run left to right (the generator places them in order), so
+     * only those around the screen's 11 cell columns are looked at */
+    uint8_t i, n = 0, len, k, rods = 0, cc = (uint8_t)(cam_x >> 4);
+    uint8_t lo = cc ? (uint8_t)(cc - 1) : 0, hi = (uint8_t)(cc + 11);
     uint16_t ex;
     uint8_t ey;
     int16_t sx, sy;
-    for (i = 0; i < stage.nenemies && n < NUM_ESPR; i++) {
-        const Enemy *e = &stage.enemy[i];
-        if ((uint16_t)(e->x1 * 16 + 16) < cam_x || (uint16_t)(e->x0 * 16) > cam_x + 160) continue;
+    const Enemy *e = stage.enemy;
+    OAM_item_t *rod = &shadow_OAM[SP_ROD];
+    for (i = stage.nenemies; i && n < NUM_ESPR; i--, e++) {
+        if (e->x1 < lo) continue;
+        if (e->x0 > hi) break;
         enemy_pos(e, stage_t, &ex, &ey, &len);
         sx = (int16_t)(ex - cam_x) - shake_x;
         sy = (int16_t)ey - (int16_t)cam_y - shake_y;
-        slot = (uint8_t)(SP_ENEMY + n * 4);
         if (e->kind == E_CRUSHER) {
             /* the piston head, and its rod above it */
-            spr16(slot, sx, (int16_t)(sy + len), SPR_CRATE, 0, 0, SPAL_CRATE);
-            for (k = 0; k < NUM_ROD && rods < NUM_ROD; k++) {
-                int16_t ry = (int16_t)(sy + len - 8 - k * 16);
+            int16_t ry = (int16_t)(sy + len - 8);
+            uint8_t rx = (uint8_t)(sx + 12);
+            spr16((uint8_t)(SP_ENEMY + (n << 2)), sx, (int16_t)(sy + len), SPR_CRATE, 0, 0, SPAL_CRATE);
+            for (k = 0; k < NUM_ROD && rods < NUM_ROD; k++, ry -= 16) {
                 if (ry < sy - 8) break;
                 if (ry < -8 || ry > 151) continue;
-                set_sprite_tile((uint8_t)(SP_ROD + rods), SPR_STREAK);
-                set_sprite_prop((uint8_t)(SP_ROD + rods), SPAL_CRATE);
-                move_sprite((uint8_t)(SP_ROD + rods), (uint8_t)(sx + 4 + 8), (uint8_t)(ry + 16));
+                rod->y = (uint8_t)(ry + 16);
+                rod->x = rx;
+                rod->tile = SPR_STREAK;
+                rod->prop = SPAL_CRATE;
+                rod++;
                 rods++;
             }
         } else {
             uint8_t t = e->kind == E_HOVER ? ((frame >> 2) & 1 ? SPR_BOT_A : SPR_BOT_B)
                                            : ((frame >> 3) & 1 ? SPR_BOT_WALK : SPR_BOT_A);
-            spr16(slot, sx, sy, t, (uint8_t)(ex > mech_px()), e->kind == E_CRAWLER && e->y1,
-                  SPAL_BOT | S_PALETTE);
+            spr16((uint8_t)(SP_ENEMY + (n << 2)), sx, sy, t, (uint8_t)(ex > mech_px()),
+                  e->kind == E_CRAWLER && e->y1, SPAL_BOT | S_PALETTE);
         }
         n++;
     }
-    for (; n < NUM_ESPR; n++) hide4((uint8_t)(SP_ENEMY + n * 4));
-    for (; rods < NUM_ROD; rods++) move_sprite((uint8_t)(SP_ROD + rods), 0, 0);
+    for (; n < NUM_ESPR; n++) hide4((uint8_t)(SP_ENEMY + (n << 2)));
+    for (; rods < NUM_ROD; rods++, rod++) rod->y = 0;
 }
 
 /* ------------------------------------------------------------------ frame */
@@ -297,15 +339,18 @@ static void draw_enemies(void)
 static void frame_end(void)
 {
     draw_mech();
-    dbg_ly[5] = LY_REG; dbg_f[5] = frame;
     draw_enemies();
-    dbg_ly[6] = LY_REG; dbg_f[6] = frame;
     play_ly = LY_REG;
     wait_vbl_done();
     /* a frame of play must take exactly one frame */
-    if (play_state == PS_PLAY && (uint8_t)(frame - last_frame) != 1) play_lag++;
+    if (play_state == PS_PLAY) {
+        /* (from the second frame of play on: menus and fades take their time) */
+        if (lag_armed && (uint8_t)(frame - last_frame) > 1) play_lag++;
+        lag_armed = 1;
+    } else {
+        lag_armed = 0;
+    }
     last_frame = frame;
-    dbg_ly[7] = LY_REG; dbg_f[7] = frame;
     input_poll();
     fx_update();
 }
@@ -377,6 +422,10 @@ static void stage_begin(void)
     stage_gen(&stage, run.seed, run.stage);
     render_prebuild(&stage);
     pal_set_deck(stage.deck);
+    {
+        uint8_t k;
+        for (k = 0; k < 8; k++) hud_thr[k] = (uint8_t)(((uint16_t)(k + 1) * stage.w + 7) / 8);
+    }
     /* keep the card up a moment */
     while ((uint8_t)(frame - t0) < 100) {
         wait_vbl_done();
@@ -387,6 +436,7 @@ static void stage_begin(void)
     HIDE_WIN;
     checked = 0;
     render_checked = 0;
+    fx_pend = 0;
     spawn_x = stage.start_x;
     spawn_y = stage.start_y;
     stage_t = 0;
@@ -424,29 +474,59 @@ static void land_fx(void)
 static void flip_fx(void)
 {
     uint8_t i;
-    dbg_q[0] = LY_REG;
     sfx_play(SFX_FLIP);
     flash(3, 0);
-    dbg_q[1] = LY_REG;
     gfx_phase(mech.g);
-    dbg_q[2] = LY_REG;
-    for (i = is_cgb ? 0 : 3; i < 6; i++) {
-        uint16_t x = (uint16_t)(cam_x + 8 + (fx_rand() & 127) + (fx_rand() & 15));
-        uint8_t y = (uint8_t)(cam_y + (mech.g ? 100 + (fx_rand() & 31) : 8 + (fx_rand() & 31)));
-        part_spawn(x, y, 0, mech.g ? -40 : 40, SPR_STREAK, mech.g ? SPAL_SPARK_G : SPAL_SPARK_P,
-                   (uint8_t)(10 + (fx_rand() & 7)));
+    {
+        /* streaks rushing the new way down (one random byte each, cheap on a DMG) */
+        int8_t vy = mech.g ? -40 : 40;
+        uint8_t pal = mech.g ? SPAL_SPARK_G : SPAL_SPARK_P;
+        uint8_t y0 = (uint8_t)(cam_y + (mech.g ? 100 : 8));
+        uint16_t x0 = cam_x + 8;
+        for (i = is_cgb ? 0 : 3; i < 6; i++) {
+            uint8_t r = fx_rand();
+            part_spawn(x0 + (uint8_t)((r & 127) + (i << 4)), (uint8_t)(y0 + (r >> 3)), 0, vy,
+                       SPR_STREAK, pal, (uint8_t)(10 + (r & 7)));
+        }
     }
-    dbg_q[3] = LY_REG;
+}
+
+/* the heavier halves of event effects (a burst, a HUD message) wait for a frame with
+ * nothing else going on, one per frame: a DMG has no time for two at once */
+#define FXP_BURST_CELL 0x01
+#define FXP_BURST_CHECK 0x02
+#define FXP_MSG_CHECK 0x04
+#define FXP_MSG_LIFE 0x08
+
+static void fx_deferred(void)
+{
+    if (fx_pend & FXP_BURST_CELL) {
+        fx_pend &= (uint8_t)~FXP_BURST_CELL;
+        part_burst((uint16_t)(fxp_x * 16 + 4), (uint8_t)(fxp_y * 16 + 4), 6, SPR_STAR, SPAL_SPARK_G, 8, 0);
+    } else if (fx_pend & FXP_BURST_CHECK) {
+        fx_pend &= (uint8_t)~FXP_BURST_CHECK;
+        part_burst((uint16_t)(stage.check_x * 16 + 4), (uint8_t)(stage.check_y * 16), 10, SPR_SPARK_BIG,
+                   SPAL_SPARK_G, 10, -1);
+    } else if (fx_pend & FXP_MSG_CHECK) {
+        fx_pend &= (uint8_t)~FXP_MSG_CHECK;
+        hud_msg("CHECKPOINT", PAL_GREEN);
+        hud_msg_t = 60;
+    } else if (fx_pend & FXP_MSG_LIFE) {
+        fx_pend &= (uint8_t)~FXP_MSG_LIFE;
+        hud_msg("EXTRA LIFE", PAL_GREEN);
+        hud_msg_t = 60;
+    }
 }
 
 static void cell_fx(void)
 {
     render_cell(&stage, ev_cx, ev_cy);
-    part_burst((uint16_t)(ev_cx * 16 + 4), (uint8_t)(ev_cy * 16 + 4), 6, SPR_STAR, SPAL_SPARK_G, 8, 0);
+    fxp_x = ev_cx;
+    fxp_y = ev_cy;
+    fx_pend |= FXP_BURST_CELL;
     if (run_cell(&run)) {
         sfx_play(SFX_NEWMECH);
-        hud_msg("EXTRA LIFE", PAL_GREEN);
-        hud_msg_t = 60;
+        fx_pend |= FXP_MSG_LIFE;
     } else {
         sfx_play(SFX_CELL);
     }
@@ -461,9 +541,7 @@ static void check_fx(void)
     spawn_x = stage.check_x;
     spawn_y = stage.check_y;
     sfx_play(SFX_EXIT_OPEN);
-    part_burst((uint16_t)(stage.check_x * 16 + 4), (uint8_t)(stage.check_y * 16), 10, SPR_SPARK_BIG, SPAL_SPARK_G, 10, -1);
-    hud_msg("CHECKPOINT", PAL_GREEN);
-    hud_msg_t = 60;
+    fx_pend |= FXP_BURST_CHECK | FXP_MSG_CHECK;
 }
 
 /* returns 1 if the run is over */
@@ -644,12 +722,10 @@ uint8_t play_run(void) BANKED
             continue;
         }
         in = input_bits();
-        dbg_ly[0] = LY_REG; dbg_f[0] = frame;
         /* physics */
         stage_t++;
         if (run.stage_time < 65535u) run.stage_time++;
         ev = mech_step(&mech, &stage, in, stage_t);
-        dbg_ly[1] = LY_REG; dbg_f[1] = frame;
         if (ev & EV_FLIP) {
             flip_fx();
             pose = POSE_FLIP;
@@ -664,8 +740,12 @@ uint8_t play_run(void) BANKED
         } else if (ev & EV_STEP) {
             sfx_play(SFX_STEP);
         }
-        if (ev & EV_CELL) cell_fx();
-        if (ev & EV_CHECK) check_fx();
+        if (ev & (EV_CELL | EV_CHECK)) {
+            if (ev & EV_CELL) cell_fx();
+            if (ev & EV_CHECK) check_fx();
+        } else if (fx_pend && !(ev & (EV_FLIP | EV_LAND))) {
+            fx_deferred();
+        }
         if (ev & EV_DEAD) {
             if (death()) {
                 music_stop();
@@ -696,16 +776,13 @@ uint8_t play_run(void) BANKED
             laser_was = laser_on(stage_t);
             gfx_laser(laser_was);
         }
-        dbg_ly[2] = LY_REG; dbg_f[2] = frame;
         camera(0);
         stream();
-        dbg_ly[3] = LY_REG; dbg_f[3] = frame;
         if (hud_msg_t) {
             if (!--hud_msg_t) hud_full();
         } else {
             hud_update();
         }
-        dbg_ly[4] = LY_REG; dbg_f[4] = frame;
         frame_end();
     }
 }

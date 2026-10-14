@@ -122,7 +122,7 @@ int main(int argc, char **argv)
     }
     if (argc >= 4 && !strcmp(argv[1], "stats")) {
         unsigned seeds = (unsigned)atoi(argv[2]), stages = (unsigned)atoi(argv[3]), sd, n;
-        unsigned fixes = 0, fixed_stages = 0, total = 0, fails = 0;
+        unsigned fixes = 0, fixed_stages = 0, total = 0, fails = 0, unsorted = 0;
         for (sd = 1; sd <= seeds; sd++)
             for (n = 1; n <= stages; n++) {
                 stage_gen(&S, (uint16_t)(sd * 7919u), (uint16_t)n);
@@ -130,9 +130,16 @@ int main(int argc, char **argv)
                 fixes += S.fixes;
                 if (S.fixes) { fixed_stages++; if (fixed_stages <= 6) printf("repair: seed %u stage %u\n", sd * 7919u, n); }
                 if (!stage_check(&S)) fails++;
+                {
+                    /* the game draws enemies assuming they run left to right */
+                    uint8_t k;
+                    for (k = 1; k < S.nenemies; k++)
+                        if (S.enemy[k].x0 < S.enemy[k - 1].x0) { unsorted++; break; }
+                }
             }
-        printf("%u stages, %u needed repairs (%u repairs), %u impassable\n", total, fixed_stages, fixes, fails);
-        return fails ? 1 : 0;
+        printf("%u stages, %u needed repairs (%u repairs), %u impassable, %u with unsorted enemies\n",
+               total, fixed_stages, fixes, fails, unsorted);
+        return fails || unsorted ? 1 : 0;
     }
     fprintf(stderr, "usage: msgen show|stats ...\n");
     return 1;
