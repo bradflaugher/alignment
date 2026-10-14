@@ -1,0 +1,46 @@
+# ALIGNMENT -- CGB palettes ("high contrast black": black void, neon purple,
+# neon green, white highlights).
+#
+#   @bgpal   <n> <NAME> <c0> <c1> <c2> <c3>
+#   @sprpal  <n> <NAME> <c0> <c1> <c2> <c3>
+#   @deckpal <n> <NAME> <c0> <c1> <c2> <c3>   hull variants swapped into PAL_WALL
+#   @alias   <NAME> <TARGET>                   extra #define in assets.h
+#
+# Colours are 24-bit #rrggbb; the generator converts to RGB555 (>>3).
+# c0 = black, c1 = dim, c2 = bright, c3 = hot highlight.
+# Every BG palette MUST have c0 = #000000.  Sprite c0 is transparent.
+
+# -- background palettes ---------------------------------------------------
+@bgpal 0 PAL_UI      #000000 #1c7a34 #48ff68 #ffffff
+@bgpal 1 PAL_WALL    #000000 #2e1060 #b048ff #f4e4ff
+@bgpal 2 PAL_GREEN   #000000 #0e5a24 #40ff60 #e4ffe4
+@bgpal 3 PAL_PURPLE  #000000 #5a1c98 #c868ff #ffe8ff
+@bgpal 4 PAL_HAZARD  #000000 #881050 #ff2ca8 #fff0fc
+@bgpal 5 PAL_DIM     #000000 #1a0e30 #2c1c50 #462e78
+@bgpal 6 PAL_METAL   #000000 #34344e #9494c0 #ffffff
+@bgpal 7 PAL_GLOW    #000000 #2c1060 #50ffa0 #ffffff
+
+# -- sprite palettes -------------------------------------------------------
+@sprpal 0 SPAL_MECH_P  #000000 #2a1a50 #c8c8ec #c450ff
+@sprpal 1 SPAL_MECH_G  #000000 #183a30 #c8ecd8 #40ff60
+@sprpal 2 SPAL_BOT     #000000 #1a1028 #6c6488 #ff2ca8
+@sprpal 3 SPAL_CRATE   #000000 #34344e #9494c0 #ffffff
+@sprpal 4 SPAL_SPARK_G #000000 #0e5a24 #40ff60 #ffffff
+@sprpal 5 SPAL_SPARK_P #000000 #5a1c98 #c868ff #ffffff
+@sprpal 6 SPAL_DEAD    #000000 #881050 #ff2ca8 #fff0fc
+@sprpal 7 SPAL_WHITE   #000000 #505070 #b0b0d0 #ffffff
+
+# -- station deck hull palettes (deck 0 = PAL_WALL) -----------------------
+@deckpal 0 DECK_VIOLET  #000000 #2e1060 #b048ff #f4e4ff
+@deckpal 1 DECK_TOXIC   #000000 #0c4422 #38e05c #e8a8ff
+@deckpal 2 DECK_STEEL   #000000 #2a2a48 #8c8cc8 #60ff80
+@deckpal 3 DECK_GHOST   #000000 #2c1c4a #dcd0ff #b048ff
+@deckpal 4 DECK_ABYSS   #000000 #220a44 #7c30d8 #58ffa0
+
+# -- palette roles ---------------------------------------------------------
+@alias PAL_TEXT PAL_UI
+@alias PAL_HUD_ACCENT PAL_UI
+@alias PAL_BACK PAL_DIM
+@alias PAL_CRATE PAL_METAL
+@alias PAL_LOGO_TOP PAL_GREEN
+@alias PAL_LOGO_BOTTOM PAL_PURPLE
