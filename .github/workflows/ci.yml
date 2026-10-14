@@ -71,7 +71,6 @@ jobs:
             build/alignment.sym
             build/build-date.txt
             build/screens/*.png
-            docs/screens/*
 
   release:
     name: Release (date-stamped, latest only)

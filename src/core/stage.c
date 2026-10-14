@@ -544,6 +544,15 @@ static void build(uint16_t seed, uint16_t n)
         }
         build_section(pick_section(un), &used);
     }
+    if (!half_done) {
+        /* (a long last section can carry past the halfway mark: the checkpoint goes
+         * here then) */
+        flat(2);
+        S->check_x = gx;
+        S->check_y = (uint8_t)(gf - 1);
+        flat(3);
+        set(S->check_x, S->check_y, T_CHECK);
+    }
     if (boss) build_arena(n);
     /* the end: a platform and the exit gate across the corridor */
     flat((uint8_t)(S->w - 3 - gx));

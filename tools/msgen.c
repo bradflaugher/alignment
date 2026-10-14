@@ -185,7 +185,7 @@ int main(int argc, char **argv)
     }
     if (argc >= 4 && !strcmp(argv[1], "stats")) {
         unsigned seeds = (unsigned)atoi(argv[2]), stages = (unsigned)atoi(argv[3]), sd, n;
-        unsigned fixes = 0, fixed_stages = 0, total = 0, fails = 0, unsorted = 0;
+        unsigned fixes = 0, fixed_stages = 0, total = 0, fails = 0, unsorted = 0, nocheck = 0;
         for (sd = 1; sd <= seeds; sd++)
             for (n = 1; n <= stages; n++) {
                 stage_gen(&S, (uint16_t)(sd * 7919u), (uint16_t)n);
@@ -194,15 +194,21 @@ int main(int argc, char **argv)
                 if (S.fixes) { fixed_stages++; if (fixed_stages <= 6) printf("repair: seed %u stage %u\n", sd * 7919u, n); }
                 if (!stage_check(&S)) fails++;
                 {
+                    /* every stage has its halfway checkpoint */
+                    uint16_t c, k = 0;
+                    for (c = 0; c < (uint16_t)S.w * SH; c++) k += S.cell[c] == T_CHECK;
+                    if (k != 1) { nocheck++; if (nocheck <= 3) printf("checkpoints %u: seed %u stage %u\n", k, sd * 7919u, n); }
+                }
+                {
                     /* the game draws enemies assuming they run left to right */
                     uint8_t k;
                     for (k = 1; k < S.nenemies; k++)
                         if (S.enemy[k].x0 < S.enemy[k - 1].x0) { unsorted++; break; }
                 }
             }
-        printf("%u stages, %u needed repairs (%u repairs), %u impassable, %u with unsorted enemies\n",
-               total, fixed_stages, fixes, fails, unsorted);
-        return fails || unsorted ? 1 : 0;
+        printf("%u stages, %u needed repairs (%u repairs), %u impassable, %u with unsorted enemies, %u without one checkpoint\n",
+               total, fixed_stages, fixes, fails, unsorted, nocheck);
+        return fails || unsorted || nocheck ? 1 : 0;
     }
     fprintf(stderr, "usage: msgen show|raw|path|replay|bot|sbot|stats ... (see tools/msgen.c)\n");
     return 2;

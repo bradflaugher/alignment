@@ -676,11 +676,12 @@ static void stage_begin(void)
 {
     uint16_t t0;
     fade_to(4);
-    stage_card();
-    t0 = frame;
     stream_on = 0;
+    /* the stage first (the card tells about it), then the card while the map is built */
     if (run.mode == MODE_CAMPAIGN) stage_load(&stage, (uint8_t)run.stage);
     else stage_gen(&stage, run.seed, run.stage);
+    stage_card();
+    t0 = frame;
     render_prebuild(&stage);
     pal_set_deck(stage.deck);
     load_boss_art();
@@ -913,7 +914,7 @@ static uint8_t death(void)
 static void clear_stage(void)
 {
     uint16_t bonus;
-    uint8_t i, all = (uint8_t)(stage.ncells && run.stage_cells >= stage.ncells);
+    uint8_t i, got, all = (uint8_t)(stage.ncells && run.stage_cells >= stage.ncells);
     play_state = PS_CLEAR;
     sfx_play(SFX_EXIT);
     for (i = 0; i < 30; i++) {
@@ -922,9 +923,10 @@ static void clear_stage(void)
         pose_t++;
         frames(1);
     }
+    got = run.stage_cells;          /* (run_clear starts the next stage's count) */
     bonus = run_clear(&run, stage.w, stage.ncells);
     save.total_stages++;
-    save.total_cells += run.stage_cells;
+    save.total_cells += got;
     if (run.mode == MODE_CAMPAIGN) {
         if (run.stage > save.sector && run.stage <= sector_count()) save.sector = (uint8_t)run.stage;
         if (run.stage > sector_count()) save.campaign_done = 1;
@@ -942,7 +944,7 @@ static void clear_stage(void)
     draw_box(1, 2, 0, 16, 9, PAL_PURPLE);
     txt(1, 4, 1, run.mode == MODE_CAMPAIGN ? "SECTOR CLEAR" : "STAGE CLEAR", PAL_GREEN);
     put_tile(1, 4, 3, UI_CELL, PAL_GREEN);
-    txt_num(1, 6, 3, run.stage_cells, 2, PAL_UI);
+    txt_num(1, 6, 3, got, 2, PAL_UI);
     txt(1, 8, 3, "/", PAL_DIM);
     txt_num(1, 9, 3, stage.ncells, 2, PAL_UI);
     if (all) txt(1, 12, 3, "ALL!", PAL_GREEN);
