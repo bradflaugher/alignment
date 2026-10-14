@@ -199,6 +199,11 @@ def compile_level(path):
                 x0, x1 = (reach, x) if left else (x, reach)
                 enemies.append((E_TURRET, x0, x1, y, 1 if ceil else 0, 1 if left else 0, phase))
     enemies.sort(key=lambda e: (e[1], e[3]))
+    # the screen draws 4 enemies: never more than 4 in any 10 columns
+    for x in range(w):
+        n = sum(1 for e in enemies if e[1] < x + 10 and e[2] >= x)
+        if n > 4:
+            raise LevelError('%s: %d enemies within columns %d-%d (at most 4 in any 10 columns)' % (name, n, x, x + 9))
     if len(enemies) > MAX_ENEMIES:
         raise LevelError('%s: %d enemies (at most %d)' % (name, len(enemies), MAX_ENEMIES))
 
