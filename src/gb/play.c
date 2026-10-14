@@ -410,15 +410,12 @@ static void draw_enemies(void)
 {
     /* from the world step's list of enemies near the mech (positions already worked out) */
     uint8_t j, n = 0, k, rods = 0, len, age;
-    uint16_t bx;
     uint8_t ey;
     int16_t sx, sy;
     OAM_item_t *rod = &shadow_OAM[SP_ROD];
     const Near *q = near;
     uint16_t cx = (uint16_t)(cam_x + shake_x);
     uint8_t cy = (uint8_t)(cam_y + shake_y);
-    bolt_o = &shadow_OAM[SP_BOLT];
-    bolt_n = 0;
     for (j = near_n; j && n < NUM_ESPR; j--, q++) {
         const Enemy *e = &stage.enemy[q->i];
         if (!e->hp) continue;
@@ -451,7 +448,6 @@ static void draw_enemies(void)
                 if ((age >> 1) == 4 && sx >= 0 && sx < 160) sfx_play(SFX_TURRET);
                 fx = e->speed;
                 fy = e->y1;
-                if (age >= 8 && turret_bolt(e, stage_t, &bx)) bolt_draw(bx, (uint8_t)(ey + 4));
             } else {
                 t = q->kind == E_HOVER ? ((frame >> 2) & 1 ? SPR_BOT_A : SPR_BOT_B)
                                        : ((frame >> 3) & 1 ? SPR_BOT_WALK : SPR_BOT_A);
@@ -473,6 +469,23 @@ static void draw_enemies(void)
     }
     for (; n < NUM_ESPR; n++) hide4((uint8_t)(SP_ENEMY + (n << 2)));
     for (; rods < NUM_ROD; rods++, rod++) rod->y = 0;
+}
+
+static void draw_enemy_bolts(void)
+{
+    /* the turrets' bolts */
+    uint8_t j, k, age;
+    uint16_t bx;
+    const Near *q = near;
+    bolt_o = &shadow_OAM[SP_BOLT];
+    bolt_n = 0;
+    for (j = near_n; j; j--, q++) {
+        const Enemy *e;
+        if (q->kind != E_TURRET) continue;
+        e = &stage.enemy[q->i];
+        age = (uint8_t)((uint8_t)(stage_t + (uint16_t)(e->phase << 2)) & 127);
+        if (e->hp && age >= 8 && turret_bolt(e, stage_t, &bx)) bolt_draw(bx, (uint8_t)(q->y + 4));
+    }
     for (k = bolt_n; k < NUM_BOLT; k++, bolt_o++) bolt_o->y = 0;
 }
 
@@ -558,8 +571,10 @@ static void frame_end(void)
         /* (a DMG draws the boss and its bolts on alternate frames) */
         if (is_cgb || (frame & 1)) draw_boss_body();
         if (is_cgb || !(frame & 1)) draw_boss_bolts();
-    } else if (is_cgb || (frame & 1)) {
-        draw_enemies();
+    } else {
+        /* (a DMG draws the enemies and their bolts on alternate frames) */
+        if (is_cgb || (frame & 1)) draw_enemies();
+        if (is_cgb || !(frame & 1)) draw_enemy_bolts();
     }
     dbg_ly[6] = LY_REG;
     for (k = 0; k < NBOOM; k++)
