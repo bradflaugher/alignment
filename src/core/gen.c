@@ -24,6 +24,9 @@ static Room cand, best, tmp;
 static GenParams P;
 static uint8_t best_score;
 static uint8_t want_side;
+static uint8_t door_x;          /* the door puzzle's barrier column, 0 = none */
+static uint8_t door_near;       /* the entry (and the plate) are left of / above it */
+static uint8_t door_horiz;      /* the barrier is a floor across the room */
 static uint16_t budget;
 
 #define SCORE_NONE 255
@@ -144,10 +147,10 @@ void gen_params(uint16_t n, GenParams *p) CORE_BANKED
 
     /* difficulty: par is counted in turns (every step counts), flips are the real
      * decisions. The first room of a deck is a breather, the last one a test. */
-    p->flips_min = (uint8_t)(1 + lvl / 14);
-    if (p->flips_min > 5) p->flips_min = 5;
-    p->par_min = (uint8_t)(7 + lvl / 6);
-    if (p->par_min > 18) p->par_min = 18;
+    p->flips_min = (uint8_t)(1 + lvl / 16);
+    if (p->flips_min > 4) p->flips_min = 4;
+    p->par_min = (uint8_t)(8 + lvl / 8);
+    if (p->par_min > 15) p->par_min = 15;
     if (deck_pos == 0 && n > 1) {
         p->par_min = (uint8_t)(p->par_min * 3 / 4);
         if (p->flips_min > 1) p->flips_min--;
@@ -160,13 +163,14 @@ void gen_params(uint16_t n, GenParams *p) CORE_BANKED
         p->par_min = (uint8_t)(6 + lvl / 8);
         p->flips_min = 1;
     }
-    p->par_max = (uint8_t)(p->par_min + 10);
+    p->par_max = (uint8_t)(p->par_min + 12);
 
     p->walls = (uint8_t)(3 + rnd(3));
     if (p->mechs & MBIT(M_PICK))
         p->picks = p->featured == M_PICK ? 1 : (uint8_t)(1 + (n >= 14) + (n >= 40 && rnd(2)));
     if (p->mechs & MBIT(M_CRATE))
         p->crates = p->featured == M_CRATE ? 1 : (uint8_t)(1 + (n >= 30 && rnd(2)));
+    if ((p->mechs & MBIT(M_DOOR)) && !p->crates) p->crates = 1;
     if (p->mechs & MBIT(M_BOT))
         p->bots = p->featured == M_BOT ? 1 : (uint8_t)(1 + (n >= 36 && rnd(2)));
 }
@@ -314,20 +318,75 @@ static void place_phase(Room *R)
     }
 }
 
+/* A plate only stays pressed under a crate or a drone, so a door puzzle is built, not
+ * rolled: a barrier with a laser door in it, a plate on the near side, and a crate on
+ * the same floor that can be pushed onto the plate. Rooms entered from the side get a
+ * wall across the room; rooms entered from above or below get a floor across it (the
+ * door is a hole you fall through). */
+static uint8_t barrier_cell(uint8_t i, uint8_t j)
+{
+    return door_horiz ? CELL(i, j) : CELL(j, i);
+}
+
 static void place_door(Room *R)
 {
-    uint8_t c, x, y, h, j, d;
-    c = rand_surface(R);
-    if (c == NONE) return;
-    R->cell[c] = T_PLATE;
-    /* a vertical barrier of 1-3 door cells, from a wall */
-    x = (uint8_t)(2 + rnd(RW - 4));
-    h = (uint8_t)(1 + rnd(3));
-    y = rnd(2) ? 1 : (uint8_t)(RH - 1 - h);
-    for (j = 0; j < h; j++) {
-        d = CELL(x, (uint8_t)(y + j));
-        if (R->cell[d] == T_EMPTY && !protected_cell(R, d) && !is_object(R, d))
-            R->cell[d] = T_DOOR;
+    uint8_t pos, d0, h, i, c, xp, yp, tries, dir, xc, k, ok, f, along_max;
+    int8_t below;
+    door_horiz = (uint8_t)(R->entry_side != SIDE_L);
+    if (door_horiz) {
+        pos = (uint8_t)(3 + rnd(3));                    /* the barrier row */
+        door_near = (uint8_t)(CY(R->entry) < pos);      /* the entry is above it */
+        along_max = RW - 2;
+    } else {
+        pos = (uint8_t)(4 + rnd(3));                    /* the barrier column */
+        door_near = 1;                                  /* the entry is left of it */
+        along_max = RH - 2;
+    }
+    door_x = pos;
+    R->barrier = (uint8_t)(pos | (door_horiz << 4) | (door_near << 5));
+    /* the barrier, with a 2-3 cell door */
+    h = (uint8_t)(2 + rnd(2));
+    if (door_horiz) d0 = (uint8_t)(1 + rnd(along_max - h + 1));
+    else d0 = R->g0 == G_DOWN ? (uint8_t)(RH - 1 - h) : 1;
+    if (!door_horiz && rnd(3) == 0) d0 = (uint8_t)(1 + rnd(RH - 1 - h));
+    for (i = 1; i <= along_max; i++) {
+        c = barrier_cell(i, pos);
+        if (protected_cell(R, c)) continue;
+        R->cell[c] = (i >= d0 && i < d0 + h) ? T_DOOR : T_WALL;
+    }
+    /* the plate: on a surface on the near side ("floor" for the starting gravity), with
+     * a crate 1-2 cells along the same floor and room for the mech behind it. Random
+     * spots first; failing that, the hull's own floor, cleared as needed. */
+    below = R->g0 == G_DOWN ? RW : -RW;
+    for (tries = 0; tries < 48; tries++) {
+        uint8_t forced = (uint8_t)(tries >= 32);
+        xp = (uint8_t)(1 + rnd(RW - 2));
+        yp = forced ? (R->g0 == G_DOWN ? RH - 2 : 1) : (uint8_t)(1 + rnd(RH - 2));
+        if (door_horiz) {
+            if (door_near ? yp >= pos : yp <= pos) continue;
+        } else if (xp >= pos) {
+            continue;
+        }
+        dir = rnd(2);
+        k = (uint8_t)(1 + rnd(2));
+        xc = dir ? (uint8_t)(xp + k) : (uint8_t)(xp - k);
+        ok = 1;
+        for (f = 0; f <= k + 1 && ok; f++) {
+            uint8_t xx = dir ? (uint8_t)(xp + f) : (uint8_t)(xp - f);
+            uint8_t cc;
+            if (xx < 1 || xx > RW - 2 || (!door_horiz && xx >= pos)) { ok = 0; break; }
+            cc = CELL(xx, yp);
+            if (protected_cell(R, cc) || is_object(R, cc) || R->cell[cc] == T_DOOR) { ok = 0; break; }
+            if (R->cell[(uint8_t)(cc + below)] != T_WALL) { ok = 0; break; }
+            if (R->cell[cc] != T_EMPTY && !forced) ok = 0;
+        }
+        if (!ok) continue;
+        for (f = 0; f <= k + 1; f++)
+            R->cell[CELL(dir ? xp + f : xp - f, yp)] = T_EMPTY;
+        R->cell[CELL(xp, yp)] = T_PLATE;
+        if (!R->crate0[0]) R->crate0[0] = CELL(xc, yp);
+        else R->crate0[1] = CELL(xc, yp);
+        return;
     }
 }
 
@@ -336,6 +395,7 @@ static uint8_t place_objects(Room *R)
     uint8_t i, c, tries, ex = CX(R->entry);
     State s;
     for (i = 0; i < P.crates; i++) {
+        if (R->crate0[i]) continue;         /* the door puzzle's crate */
         c = rand_empty(R);
         if (c != NONE) R->crate0[i] = c;
     }
@@ -449,10 +509,25 @@ static uint8_t focus_matters(const Room *R)
 
 /* Explore the room with its exit sealed and put the exit where it fits best.
  * Fills R->exit / exit_side / par / flips; returns the score. */
+static void door_from(const Room *R)
+{
+    door_x = (uint8_t)(R->barrier & 15);
+    door_horiz = (uint8_t)((R->barrier >> 4) & 1);
+    door_near = (uint8_t)((R->barrier >> 5) & 1);
+}
+
+static uint8_t on_barrier(const Room *R, uint8_t c)
+{
+    uint8_t pos = (uint8_t)(R->barrier & 15);
+    if (!pos) return 0;
+    return (R->barrier & 0x10) ? CY(c) == pos : CX(c) == pos;
+}
+
 static uint8_t place_exit(Room *R)
 {
     State s;
     uint8_t c, sc, bsc = SCORE_NONE, bc = NONE, bd = 0, d, side, pref;
+    door_from(R);
     if (R->exit) {
         R->cell[R->exit] = T_WALL;
         R->exit = NONE;
@@ -471,6 +546,8 @@ static uint8_t place_exit(Room *R)
         if (c == R->entry) continue;
         sc = score_of(d, explore_flips[c]);
         pref = side == want_side ? 0 : 1;   /* the side the route wants, if it can */
+        if (door_x && (door_horiz ? (door_near ? CY(c) <= door_x : CY(c) >= door_x) : CX(c) <= door_x))
+            pref = (uint8_t)(pref + 3);     /* a door puzzle's exit is behind the door */
         sc = (uint8_t)(sc + pref);
         if (sc < bsc || (sc == bsc && d > bd)) {
             bsc = sc;
@@ -484,10 +561,13 @@ static uint8_t place_exit(Room *R)
     R->cell[bc] = T_EXIT;
     R->par = bd;
     R->flips = explore_flips[bc];
-    /* The doorway is a cell the mech can step or drop into before the exit opens,
-     * which the sealed exploration didn't see: solve the room for real. */
-    R->par = solve_room(R);
-    R->flips = solve_flips;
+    /* The closed exit is as solid as the wall the exploration used, so its depth is the
+     * room's par. Except with crates or drones about: the mech leaving through a ceiling
+     * or floor doorway mid-fall escapes things that would land on it a moment later. */
+    if (R->crate0[0] || R->crate0[1] || R->bot0[0] || R->bot0[1]) {
+        R->par = solve_room(R);
+        R->flips = solve_flips;
+    }
     return score_of(R->par, R->flips);
 }
 
@@ -527,7 +607,7 @@ static uint8_t evaluate(Room *R)
     sc = place_exit(R);
     if (sc == SCORE_NONE) return sc;
     /* the focus rule costs a search: only ask once the room is in its window */
-    if (sc || !focus_matters(R)) sc = (uint8_t)(sc + 6);
+    if (sc || !focus_matters(R)) sc = (uint8_t)(sc + (P.featured != 0xFF ? 6 : 2));
     return sc;
 }
 
@@ -537,6 +617,7 @@ static void roll(Room *R, const Door *d)
     room_clear(R);
     R->index = d->index;
     R->featured = P.featured;
+    door_x = 0;
     for (i = 0; i < RN; i++)
         if (!interior(i)) R->cell[i] = T_WALL;
     R->entry = d->cell;
@@ -565,7 +646,7 @@ static uint8_t mutate(Room *R)
     if (k < 4) {
         /* grow or shrink the structure by one cell (never a lone floating block) */
         c = rand_interior();
-        if (protected_cell(R, c) || is_object(R, c)) return 0;
+        if (protected_cell(R, c) || is_object(R, c) || on_barrier(R, c)) return 0;
         t = R->cell[c];
         if (t == T_WALL) {
             R->cell[c] = T_EMPTY;
@@ -581,7 +662,7 @@ static uint8_t mutate(Room *R)
         /* move a feature (hazard, phase block, door, plate or energy cell) */
         c = rand_interior();
         t = R->cell[c];
-        if (t == T_EMPTY || t == T_WALL) return 0;
+        if (t == T_EMPTY || t == T_WALL || on_barrier(R, c)) return 0;
         d = rand_empty(R);
         if (d == NONE) return 0;
         R->cell[d] = t;
@@ -626,6 +707,9 @@ static void tidy(Room *R)
     for (c = 0; c < RN && gen_cost < GEN_TIDY_BUDGET; c++) {
         t = R->cell[c];
         if (t != T_PLASMA && t != T_PHASE_P && t != T_PHASE_G && t != T_DOOR) continue;
+        if (P.featured != 0xFF && ((t == T_PLASMA && P.featured == M_PLASMA) || t == T_DOOR ||
+                                   ((t == T_PHASE_P || t == T_PHASE_G) && P.featured == M_PHASE)))
+            continue;                       /* a lesson keeps what it teaches */
         R->cell[c] = T_EMPTY;
         par = solve_room(R);
         if (par == R->par) {
@@ -649,9 +733,12 @@ static void tidy(Room *R)
             if (R->cell[c] == T_PLATE) plates++;
             if (R->cell[c] == T_DOOR) doors++;
         }
+        /* (doors without a plate never open: they are walls; a plate alone does nothing) */
         if (!plates || !doors)
-            for (c = 0; c < RN; c++)
-                if (R->cell[c] == T_PLATE || R->cell[c] == T_DOOR) R->cell[c] = T_EMPTY;
+            for (c = 0; c < RN; c++) {
+                if (R->cell[c] == T_PLATE) R->cell[c] = T_EMPTY;
+                else if (R->cell[c] == T_DOOR) R->cell[c] = T_WALL;
+            }
     }
     mechs_present(R);
 }
@@ -729,8 +816,9 @@ void gen_room(Room *R, uint16_t seed, const Door *d) CORE_BANKED
             stall = 0;
         }
     }
-    /* nothing solvable within the budget: keep rolling a little more, then give up */
-    while (best_score == SCORE_NONE && gen_cost < budget + budget / 2) {
+    /* nothing solvable within the budget, or only a throwaway room (far too short):
+     * keep rolling a little longer */
+    while ((best_score == SCORE_NONE || best.par < P.par_min / 2 + 2) && gen_cost < budget + budget / 2) {
         roll(&cand, d);
         sc = evaluate(&cand);
         if (sc < best_score) {

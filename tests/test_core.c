@@ -166,7 +166,7 @@ static void test_rules(void)
             /* walking to the doorway without the cell: sealed */
             uint8_t i;
             for (i = 0; i < 9; i++) sim_turn(&R, &s, ACT_R, NULL);
-            CHECK(s.o[0] == CELL(9, 7));
+            CHECK(s.o[0] == CELL(8, 7));     /* the force field is solid */
             CHECK(sim_turn(&R, &s, ACT_R, NULL) == TR_BLOCKED);
         }
     }
@@ -384,6 +384,7 @@ static void test_fast_vs_ref(void)
         CHECK(sa == sb && !memcmp(&s, &t, sizeof(State)));
         if (sa != TR_OK) continue;
         for (k = 0; k < 60; k++) {
+            State before = s;
             a = rnd8(3);
             ra = sim_turn(&R, &s, a, &la);
             rb = ref_sim_turn(&R, &t, a, &lb);
@@ -391,7 +392,21 @@ static void test_fast_vs_ref(void)
             CHECKF(ra == rb, "game %u turn %u: %u vs %u", games, k, ra, rb);
             if (ra != TR_BLOCKED) CHECKF(same_log(&la, &lb), "game %u turn %u log", games, k);
             CHECKF(!memcmp(&s, &t, sizeof(State)), "game %u turn %u state", games, k);
-            if (ra != rb || memcmp(&s, &t, sizeof(State))) break;
+            if (ra != rb || memcmp(&s, &t, sizeof(State))) {
+                static int shown;
+                if (!shown++) {
+                    uint8_t q;
+                    printf("  act %u g %u: before", a, before.g);
+                    for (q = 0; q < NOBJ; q++) printf(" %u", before.o[q]);
+                    printf("\n  fast %u:", ra);
+                    for (q = 0; q < NOBJ; q++) printf(" %u", s.o[q]);
+                    printf(" g%u got%u\n  ref  %u:", s.g, s.got, rb);
+                    for (q = 0; q < NOBJ; q++) printf(" %u", t.o[q]);
+                    printf(" g%u got%u\n", t.g, t.got);
+                    for (q = 0; q < RN; q++) printf("%c%s", ".#~pg_|***()"[R.cell[q]], (q % 10 == 9) ? "\n" : "");
+                }
+                break;
+            }
             if (la.flags & EV_PUSH) pushes++;
             if (la.flags & EV_BOT_DIED) crushes++;
             if (ra == TR_WIN) { wins++; break; }

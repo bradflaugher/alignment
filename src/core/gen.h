@@ -15,8 +15,8 @@
 /* Work is counted in states visited plus a per-search overhead, so the host and the
  * Game Boy stop at exactly the same point. */
 #define GEN_SEARCH_OVERHEAD 12
-#define GEN_BUDGET 9000
-#define GEN_TIDY_BUDGET 11000
+#define GEN_BUDGET 3000
+#define GEN_TIDY_BUDGET 3800
 
 typedef struct {
     uint8_t mechs;      /* mechanics placed */

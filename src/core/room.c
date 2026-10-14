@@ -47,6 +47,7 @@ static const uint8_t t_flags[NUM_T] = {
 
 uint8_t f_o[NOBJ];
 uint8_t f_g, f_got;
+uint8_t sim_loads;              /* bumped by every sim_load: lets a search see it was disturbed */
 
 static uint8_t fl[RN];          /* F_* per cell */
 static uint8_t occ[RN];         /* slot + 1 of the object in a cell, 0 = free */
@@ -74,6 +75,7 @@ void sim_load(const Room *R)
 {
     uint8_t i, t;
     const uint8_t *src = R->cell;
+    sim_loads++;
     f_has_plate = 0;
     pick_cell[0] = pick_cell[1] = pick_cell[2] = NONE;
     for (i = 0; i < RN; i++) {
@@ -162,6 +164,8 @@ static void fall_one(void)
         s_nc = (uint8_t)(s_c + s_dy);
         if (fl[s_nc] & s_mask)
             break;
+        if (s_nc == f_exit && !s_s && f_got != f_full)
+            break;                      /* the exit's force field is still up */
         s_k = occ[s_nc];
         if (s_k) {
             s_k--;
@@ -214,22 +218,27 @@ static void fall_one(void)
 
 static void fall_pass(void)
 {
-    uint8_t order[NOBJ], key[NOBJ];
+    /* An object with a wall (or a solid block) right under it can't fall, whatever the
+     * order, and that is nearly every object nearly every turn. The others fall in
+     * order, the one nearest the ground first. */
+    uint8_t order[NOBJ];
     uint8_t n = 0, i, j, c, kk;
     s_dy = f_g ? -RW : RW;
     s_edge = f_g ? 0 : RH - 1;
-    /* the object nearest the ground falls first */
     for (i = 0; i < NOBJ; i++) {
         c = f_o[i];
         if (!c) continue;
-        kk = f_g ? cell_y[c] : (uint8_t)(RH - 1 - cell_y[c]);
+        if (cell_y[c] != s_edge && (fl[(uint8_t)(c + s_dy)] & (i ? m_obj : m_mech)))
+            continue;                   /* resting on something that never moves */
+        /* by row along gravity; within a row, slot order (a death stops the pass, so
+         * the order is visible in what was left unmoved) */
+        kk = cell_y[c];
         j = n;
-        while (j && key[j - 1] > kk) {
-            key[j] = key[j - 1];
-            order[j] = order[j - 1];
-            j--;
+        if (f_g) {
+            while (j && cell_y[f_o[order[j - 1]]] > kk) { order[j] = order[j - 1]; j--; }
+        } else {
+            while (j && cell_y[f_o[order[j - 1]]] < kk) { order[j] = order[j - 1]; j--; }
         }
-        key[j] = kk;
         order[j] = i;
         n++;
     }
@@ -341,7 +350,7 @@ uint8_t sim_core(uint8_t act, TurnLog *log)
             }
             t = (uint8_t)(p + 1);
         }
-        if (fl[t] & m_mech)
+        if ((fl[t] & m_mech) || (t == f_exit && f_got != f_full))
             goto blocked;
         k = occ[t];
         if (k) {
@@ -398,6 +407,19 @@ uint8_t sim_core(uint8_t act, TurnLog *log)
         if (doors == d1) break;
     }
     calc_doors();
+    /* a laser door that is shut at the end of the turn zaps what is inside it (a crate
+     * jams it open instead) */
+    if (f_has_plate && !doors && res == TR_OK) {
+        for (k = 0; k < NOBJ; k++) {
+            t = f_o[k];
+            if (!t || !(fl[t] & F_DOOR) || (k && k < SLOT_BOT)) continue;
+            if (!k) {
+                mech_dies(t, DIE_ZAP, NO_KILLER);
+                break;
+            }
+            kill_bot(k, t, NO_KILLER);
+        }
+    }
 
 done:
     if (lg) {

@@ -26,7 +26,7 @@ uint8_t solver_mem[8192];
 #define MEM_MAP() do { } while (0)
 #endif
 
-#define HASH_N 512
+#define HASH_N 256
 #define REC(i) (MEM + ((uint16_t)(i) << 3))
 #define END 0xFFFFu
 
@@ -75,7 +75,7 @@ static uint16_t hash_key(void)
     h ^= (uint16_t)((uint16_t)key[2] << 1);
     h ^= (uint16_t)((uint16_t)key[3] << 3);
     h ^= (uint16_t)((uint16_t)key[4] << 4);
-    h ^= (uint16_t)(h >> 9);
+    h ^= (uint16_t)(h >> 8);
     return (uint16_t)(h & (HASH_N - 1));
 }
 
@@ -161,13 +161,14 @@ static uint8_t mark_explore(uint8_t depth, uint8_t full, uint8_t meta)
 static uint8_t search(const Room *R, const State *from, uint8_t mode, uint8_t bg)
 {
     uint16_t head, layer_end;
-    uint8_t depth, act, r, meta, m0, epoch, full;
+    uint8_t depth, act, r, meta, m0, epoch, full, loads;
     uint8_t cur[5];
     uint8_t *d;
 
 restart:
     search_reset(R, from);
     epoch = solve_epoch;
+    loads = sim_loads;
     full = room_full(R);
     head = 0;
     layer_end = 1;
@@ -190,7 +191,10 @@ restart:
             if (solve_epoch != epoch)
                 goto restart;           /* someone else used the work area */
             MEM_MAP();
-            sim_load(R);                /* the game's own turns reload the sim tables */
+            if (sim_loads != loads) {   /* the game's own turns reload the sim tables */
+                sim_load(R);
+                loads = sim_loads;
+            }
         }
         d = REC(head);
         cur[0] = d[0];

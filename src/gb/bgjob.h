@@ -1,24 +1,29 @@
 /* ALIGNMENT - background work: the room generator and hint searches run as a
- * coroutine in the CPU time the game doesn't use. */
+ * coroutine in the CPU time the game doesn't use. The generator works up to
+ * BG_AHEAD rooms ahead of the player (a room's door only depends on the room
+ * before it), so a slow room hides behind quick ones. */
 #ifndef AL_BGJOB_H
 #define AL_BGJOB_H
 #include <stdint.h>
 #include "../core/room.h"
 #include "../core/gen.h"
 
-extern Room bg_room;            /* the room the generator built */
-extern Door bg_door;            /* ...and its door */
-extern volatile uint8_t bg_gen_state;   /* 0 idle, 1 working, 2 done */
+#define BG_AHEAD 3
+
 extern volatile uint8_t bg_hint_state;  /* 0 idle, 1 working, 2 done */
 extern uint8_t bg_hint_act, bg_hint_rem; /* the answer: ACT_*, turns left (0 = no way out) */
 
 void bg_init(void);
-void bg_start_gen(uint16_t seed, const Door *d);
-void bg_cancel_gen(void);       /* (forget the job; the coroutine finishes it unseen) */
+/* forget everything queued; start building from door d of run seed */
+void bg_reset(uint16_t seed, const Door *d);
+/* rooms built and waiting */
+uint8_t bg_ready(void);
+/* take the next room (bg_ready() must be > 0) */
+void bg_take(Room *R, Door *d);
+/* work units the generator has done on the room it is building (for a progress bar) */
+uint16_t bg_progress(void);
 void bg_request_hint(const Room *R, const State *s);
 /* once per frame from the main loop: work until the frame's slice is used up */
 void bg_run(void);
-/* work flat out (the player is waiting), keeping VBlank, sound and fx alive */
-void bg_run_frame(void);
 
 #endif

@@ -70,8 +70,10 @@ static uint8_t solid_for(uint8_t t, uint8_t kind)
     case T_DOOR:
         return (uint8_t)!r_doors;
     case T_ENTRY:
-    case T_EXIT:
         return kind;            /* only the mech goes through doorways */
+    case T_EXIT:
+        /* ...and the exit's force field stops it too, until every cell is collected */
+        return (uint8_t)(kind || r_got != r_full);
     }
     return 0;
 }
@@ -367,6 +369,19 @@ uint8_t ref_sim_core(uint8_t act, TurnLog *lg)
             break;
     }
     r_doors = calc_doors();
+    /* a shut laser door zaps the mech or a drone inside it; a crate jams it open */
+    if (r_has_plate && !r_doors && res == TR_OK) {
+        uint8_t k2;
+        for (k2 = 0; k2 < NOBJ; k2++) {
+            uint8_t c2 = r_o[k2];
+            if (!c2 || r_cell[c2] != T_DOOR || (k2 && k2 < SLOT_BOT)) continue;
+            if (!k2) {
+                mech_dies(c2, DIE_ZAP, NO_KILLER, lg);
+                break;
+            }
+            kill_bot(k2, c2, NO_KILLER, lg);
+        }
+    }
 
 done:
     if (lg) {

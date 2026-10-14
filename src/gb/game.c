@@ -193,6 +193,5 @@ void game_main(void) BANKED
         }
         if (play_run(&d) == PLAY_OVER) game_over();
         else fade_to(4);
-        bg_cancel_gen();
     }
 }

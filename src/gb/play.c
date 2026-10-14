@@ -13,7 +13,8 @@
 #include "../core/gen.h"
 
 Run run;
-uint8_t play_idle;                 /* waiting for input (the ROM tests watch it) */
+uint8_t play_idle;
+uint16_t scan_frames;               /* frames spent waiting for the generator (tests) */                 /* waiting for input (the ROM tests watch it) */
 int16_t map_rx[MAP_N], map_ry[MAP_N];
 uint8_t map_n, map_head;
 
@@ -674,10 +675,11 @@ static void announce_room(uint8_t deck_change)
 static void wait_next_room(void)
 {
     uint8_t n = 0;
-    if (bg_gen_state == 2) return;
+    if (bg_ready()) return;
     hud_msg("SCANNING", PAL_GREEN);
-    while (bg_gen_state != 2) {
+    while (!bg_ready()) {
         tick();
+        scan_frames++;
         if ((++n & 15) == 0) {
             sfx_play(SFX_SCAN);
             put_tile(1, (uint8_t)(14 + ((n >> 4) & 3)), 0, (n & 16) ? UI_BAR_FULL : UI_BAR_HALF, PAL_GREEN);
@@ -685,7 +687,7 @@ static void wait_next_room(void)
     }
 }
 
-/* scroll from this room into the next one (already in bg_room) */
+/* scroll from this room into the next one (built and waiting in the queue) */
 static void transition(void)
 {
     uint8_t dir = room.exit_side, nox = room_ox, noy = room_oy, done_cols = 0, steps, s;
@@ -699,8 +701,12 @@ static void transition(void)
     else if (dir == SIDE_T) noy = (uint8_t)((room_oy - ROOM_TH) & 31);
     else noy = (uint8_t)((room_oy + ROOM_TH) & 31);
 
-    memcpy(&room, &bg_room, sizeof(Room));
-    memcpy(&door, &bg_door, sizeof(Door));
+    bg_take(&room, &door);
+    if (run.mode == MODE_ZEN) {
+        save.zen_seed = run.seed;
+        memcpy(&save.zen_door, &door, sizeof(Door));
+        save_write();
+    }
     state_start(&room, &ns);
     render_hide = 0;
     render_build(&room, &ns);
@@ -796,24 +802,17 @@ static void transition(void)
     /* gravity realigns in a side airlock */
     hud_draw();
     announce_room(deck_change);
-    /* build the next room while this one is played */
-    {
-        Door nd;
-        gen_next_door(&door, &room, &nd);
-        bg_start_gen(run.seed, &nd);
-    }
 }
 
 static void enter_first_room(const Door *d)
 {
-    memcpy(&door, d, sizeof(Door));
-    bg_start_gen(run.seed, &door);
+    bg_reset(run.seed, d);
     clear_win();
     move_win(7, HUD_WY);
     SHOW_WIN;
     hud_msg("BOOTING", PAL_GREEN);
     wait_next_room();
-    memcpy(&room, &bg_room, sizeof(Room));
+    bg_take(&room, &door);
     start_state();
     room_ox = room_oy = 0;
     room_x8 = room_y8 = 0;
@@ -829,11 +828,6 @@ static void enter_first_room(const Door *d)
     music_for_room();
     hud_draw();
     announce_room(0);
-    {
-        Door nd;
-        gen_next_door(&door, &room, &nd);
-        bg_start_gen(run.seed, &nd);
-    }
 }
 
 /* ------------------------------------------------------------------ the loop */
@@ -868,10 +862,6 @@ static uint8_t clear_room(void)
     }
     ticks(30);
     wait_next_room();
-    if (run.mode == MODE_ZEN) {
-        save.zen_seed = run.seed;
-        memcpy(&save.zen_door, &bg_door, sizeof(Door));
-    }
     save_write();
     transition();
     return 0;

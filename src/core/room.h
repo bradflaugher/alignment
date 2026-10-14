@@ -43,7 +43,7 @@ enum {
     T_PICK1,
     T_PICK2,
     T_ENTRY,      /* the opening the mech came in through (solid to crates and drones) */
-    T_EXIT,       /* the way out: sealed by a force field until every cell is collected */
+    T_EXIT,       /* the way out: a force field (solid) until every cell is collected */
     NUM_T
 };
 #define IS_PICK(t) ((uint8_t)((t) - T_PICK0) < 3)
@@ -84,6 +84,7 @@ typedef struct {
     uint8_t featured;       /* mechanic introduced in this room, or 0xFF */
     uint8_t fallback;       /* 1 = the hand-made safety room */
     uint16_t index;         /* room number, from 1 */
+    uint8_t barrier;        /* generator only: a door puzzle's barrier (0 none; pos | horiz << 4 | near << 5) */
 } Room;
 
 typedef struct {
@@ -139,6 +140,7 @@ uint8_t settle_state(const Room *R, State *s);
  * sim_load(R) once per room; f_o/f_g/f_got hold the state; sim_core(act, log). */
 extern uint8_t f_o[NOBJ];
 extern uint8_t f_g, f_got;
+extern uint8_t sim_loads;
 void sim_load(const Room *R);
 uint8_t sim_core(uint8_t act, TurnLog *log);
 

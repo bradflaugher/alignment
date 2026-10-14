@@ -115,14 +115,15 @@ static void cell_quarters(uint8_t c)
 
 void render_build(const Room *R, const State *s) BANKED
 {
-    uint8_t c, i, x, y;
+    uint8_t c, x, y;
+    uint16_t i;
     cR = R;
     cS = s;
     for (c = 0; c < RN; c++) {
         cell_quarters(c);
         x = (uint8_t)(CX(c) * 2);
         y = (uint8_t)(CY(c) * 2);
-        i = (uint8_t)(y * ROOM_TW + x);
+        i = (uint16_t)y * ROOM_TW + x;
         rbuf_t[i] = q_t[0];
         rbuf_t[i + 1] = q_t[1];
         rbuf_t[i + ROOM_TW] = q_t[2];
@@ -144,7 +145,7 @@ void render_blit_row(uint8_t row, uint8_t ox, uint8_t oy) BANKED
 {
     uint8_t y = (uint8_t)((oy + row) & 31);
     uint8_t first = (uint8_t)(32 - (ox & 31));
-    const uint8_t *t = rbuf_t + row * ROOM_TW, *a = rbuf_a + row * ROOM_TW;
+    const uint8_t *t = rbuf_t + (uint16_t)row * ROOM_TW, *a = rbuf_a + (uint16_t)row * ROOM_TW;
     ox &= 31;
     if (first >= ROOM_TW) {
         put_block(ox, y, ROOM_TW, 1, t, a);
@@ -159,8 +160,8 @@ void render_blit_col(uint8_t col, uint8_t ox, uint8_t oy) BANKED
     uint8_t t[ROOM_TH], a[ROOM_TH], r, x = (uint8_t)((ox + col) & 31);
     uint8_t first = (uint8_t)(32 - (oy & 31));
     for (r = 0; r < ROOM_TH; r++) {
-        t[r] = rbuf_t[r * ROOM_TW + col];
-        a[r] = rbuf_a[r * ROOM_TW + col];
+        t[r] = rbuf_t[(uint16_t)r * ROOM_TW + col];
+        a[r] = rbuf_a[(uint16_t)r * ROOM_TW + col];
     }
     oy &= 31;
     if (first >= ROOM_TH) {
