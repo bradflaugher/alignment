@@ -393,6 +393,7 @@ static void twin(uint16_t mcx, uint8_t mcy)
     if (B->flip_in && !--B->flip_in) {
         B->g ^= 1;
         B->state = 1;
+        B->vy = 0;                          /* (a flip ends a hop) */
     }
     if (B->state == 1) {
         /* falling to the other side */
@@ -428,11 +429,12 @@ static void twin(uint16_t mcx, uint8_t mcy)
         }
     }
     if (B->vy) {
-        /* a hop: up 6+5+...+1 then back down */
+        /* a hop: vy 6..1 up, then -1..-6 back down (0 means no hop, so it is skipped:
+         * a hop that stopped there left the twin in the air, a little higher each time) */
         int8_t step = (int8_t)(B->vy > 0 ? (B->vy > 3 ? 4 : 2) : -(B->vy < -3 ? 4 : 2));
         if (B->g) B->y = (uint8_t)(B->y + step);
         else B->y = (uint8_t)(B->y - step);
-        B->vy--;
+        if (--B->vy == 0) B->vy = -1;
         if (B->vy < -6) {
             B->vy = 0;
             B->y = B->g ? aT : floor_y;

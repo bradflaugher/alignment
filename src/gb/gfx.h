@@ -41,6 +41,8 @@ void bg_tile_data(uint8_t first, uint8_t n, const uint8_t *src);
 /* text on the BG map (win = 0) or the window (win = 1); pal is the CGB palette */
 void txt(uint8_t win, uint8_t x, uint8_t y, const char *s, uint8_t pal);
 void txt_num(uint8_t win, uint8_t x, uint8_t y, uint16_t v, uint8_t digits, uint8_t pal);
+/* a score, 7 digits (up to 9 999 999) */
+void txt_score(uint8_t win, uint8_t x, uint8_t y, uint32_t sc, uint8_t pal);
 void txt_hex(uint8_t win, uint8_t x, uint8_t y, uint16_t v, uint8_t pal);
 /* the HUD: window row 0, edited here and copied in the next VBlank by hud_commit() */
 extern uint8_t hud_t[20], hud_a[20];

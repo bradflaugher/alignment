@@ -6,7 +6,8 @@ they must finish it there too (same stage, same game code), without the mech bei
 Frame budget: a Color (double speed) may miss a frame or two in the moments a boss
 arena seals. An original Game Boy (half the CPU) slows down in the busiest stretches,
 as the old games did: never for more than 20% of a stage's frames (a regression guard;
-most sectors stay under 5%)."""
+most sectors stay under 5%). The VBlank handler's work (map columns, art and palette
+copies) must end inside VBlank: hardware drops VRAM writes after it, PyBoy doesn't."""
 import subprocess
 import unittest
 from romlib import Game, MSGEN, PS_PLAY, PS_CLEAR
@@ -42,6 +43,8 @@ class Play(unittest.TestCase):
         self.assertEqual(g.u16('run', RUN_DEATHS), deaths0, 'the mech died on %s' % name)
         self.assertEqual(g.u8('play_state'), PS_CLEAR, '%s not cleared' % name)
         lag, frames = g.u16('play_lag') - lag0, g.pb.frame_count - t0
+        # (PyBoy keeps VRAM writes made after VBlank; hardware drops them: torn tiles)
+        self.assertEqual(g.u8('vbl_late'), 0, 'VBlank work ran past VBlank on %s' % name)
         if g.tag == 'cgb':
             self.assertLessEqual(lag, 4, 'missed frames on %s (CGB)' % name)
         else:

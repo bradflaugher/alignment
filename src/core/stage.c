@@ -148,6 +148,8 @@ void arena_open(Stage *st) CORE_BANKED
 {
     if (st->arena.kind == BOSS_NONE) return;
     door_rows(st, st->arena.x1, st->arena.m1, T_EMPTY);
+    /* (and the way back: a respawn is outside the entry door) */
+    door_rows(st, st->arena.x0, st->arena.m0, T_DOOR_OPEN);
 }
 
 /* a turret's bolt runs along its row until the first solid cell (at most 15 cells) */
