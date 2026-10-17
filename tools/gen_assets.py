@@ -100,7 +100,7 @@ SPR_REQUIRED = [
     'SPR_SPARK_BIG', 'SPR_SPARK_SMALL', 'SPR_PIXEL', 'SPR_STREAK', 'SPR_STAR',
     'SPR_CURSOR', 'SPR_RING', 'SPR_SHOT', 'SPR_SHOT_POWER', 'SPR_BOLT',
     'SPR_TURRET', 'SPR_TURRET_FIRE', 'SPR_EXPLODE1',
-    'SPR_EXPLODE2',
+    'SPR_EXPLODE2', 'SPR_MECH_SHOOT_UP', 'SPR_SHOT_UP', 'SPR_SHOT_POWER_UP',
 ]
 # 16x16 sprites (4 tiles TL,TR,BL,BR); everything else is a single 8x8 tile
 SPR_16X16_PREFIXES = ('SPR_MECH', 'SPR_BOT', 'SPR_CRATE', 'SPR_TURRET',
@@ -685,7 +685,9 @@ def gen(data):
                  '   are 4 tiles TL,TR,BL,BR.  Mech frames (incl. MECH_SHOOT, cannon muzzle at\n'
                  '   x=15,y=7) face right with gravity down: OAM X flip for left, Y flip for\n'
                  '   gravity up.  TURRET: floor-mounted (base on row 15), barrel right: X flip\n'
-                 '   = left, Y flip = ceiling.  SHOT / SHOT_POWER travel right (X flip = left).\n'
+                 '   = left, Y flip = ceiling.  SHOT / SHOT_POWER travel right (X flip = left);\n'
+                 '   SHOT_UP / SHOT_POWER_UP travel up (Y flip = down).  MECH_SHOOT_UP aims\n'
+                 '   overhead (muzzle x=13..14, y=0).\n'
                  '   SPR_RING is the TL quarter of a 16x16 ring (draw 4 with X/Y flips).\n'
                  '   The rest are single 8x8 tiles.  Tiles BOSS_TILE_BASE..127 are boss art.'))
     a('')

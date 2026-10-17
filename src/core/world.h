@@ -19,7 +19,7 @@
 typedef struct {
     uint16_t x;             /* top-left of the 8x8 sprite, px */
     uint8_t y;
-    int8_t vx;
+    int8_t vx, vy;          /* (one of them is 0: a shot flies level or straight up/down) */
     uint8_t life;           /* frames left; 0 = free */
 } Shot;
 

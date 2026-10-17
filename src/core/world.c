@@ -774,9 +774,10 @@ static uint16_t damage_enemy(const Near *q, uint8_t dmg)
     return EV_KILL;
 }
 
-/* does the box (x, y, w, h) overlap the near enemy q's box? */
-#define HITS_NEAR(q, x, y, w, h) ((x) < (uint16_t)((q)->bx + (q)->bw) && (q)->bx < (uint16_t)((x) + (w)) && \
-                                  (y) < (uint8_t)((q)->by + (q)->bh) && (q)->by < (uint8_t)((y) + (h)))
+/* does the box (x, y, w, h) overlap the near enemy q's box? (rows first: 8-bit sums,
+ * and most enemies are at another height) */
+#define HITS_NEAR(q, x, y, w, h) ((y) < (uint8_t)((q)->by + (q)->bh) && (q)->by < (uint8_t)((y) + (h)) && \
+                                  (x) < (uint16_t)((q)->bx + (q)->bw) && (q)->bx < (uint16_t)((x) + (w)))
 
 
 /* what stops a shot, by gravity and terrain */
@@ -784,6 +785,43 @@ static const uint8_t shot_solid[2][NUM_T] = {
     { 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
     { 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
 };
+
+/* a shot fired overhead: straight up (down in gravity up), its own path so the level
+ * shots, nearly all of them, pay nothing for it; look: hits are looked for this frame */
+static uint16_t vshot(Shot *s, uint8_t look)
+{
+    uint16_t ev = 0, sx;
+    uint8_t j, sy;
+    const Near *q;
+    /* (the stage is 256 px tall: off its top or bottom, it is gone) */
+    int16_t ny = (int16_t)s->y + s->vy;
+    if (ny < 0 || ny > SH * 16 - 8) { s->life = 0; return 0; }
+    s->y = (uint8_t)ny;
+    sx = (uint16_t)(s->x + 4);
+    if ((uint8_t)(sx >> 4) >= S->w) { s->life = 0; return 0; }
+    if (shot_solid[P->m.g][S->cell[(sx & 0xFFF0u) | (uint8_t)((uint8_t)(s->y + 4) >> 4)]]) {
+        s->life = 0;
+        ev2 |= EV2_TINK;
+        return 0;
+    }
+    if (look) return 0;
+    sx = (uint16_t)(s->x + 3);
+    sy = (uint8_t)(s->y + 1);
+    for (j = near_n, q = near; j; j--, q++) {
+        if (!HITS_NEAR(q, sx, sy, 2, 6)) continue;
+        if (!S->enemy[q->i].hp) continue;
+        s->life = 0;
+        if (q->kind == E_CRUSHER) ev2 |= EV2_TINK;
+        else ev |= damage_enemy(q, P->power ? 2 : 1);
+        return ev;
+    }
+    if (B->active && sx < (uint16_t)(bbx + bbw) && bbx < (uint16_t)(sx + 2) &&
+        sy < (uint8_t)(bby + bbh) && bby < (uint8_t)(sy + 6)) {
+        s->life = 0;
+        boss_damage(P->power ? 2 : 1);
+    }
+    return ev;
+}
 
 static uint16_t shots(uint16_t clk)
 {
@@ -796,6 +834,10 @@ static uint16_t shots(uint16_t clk)
     for (i = 0; i < NSHOT; i++, s++) {
         if (!s->life) continue;
         s->life--;
+        if (s->vy) {
+            ev |= vshot(s, (uint8_t)((uint8_t)clk ^ i) & 1);
+            continue;
+        }
         s->x = (uint16_t)(s->x + s->vx);
         /* walls stop it (a phase block only in the gravity that makes it solid) */
         cx = (uint16_t)(s->x + 4);
@@ -925,11 +967,22 @@ uint16_t world_step(Player *p, Stage *st, Boss *b, uint8_t in, uint16_t t) CORE_
         for (i = 0; i < NSHOT; i++, s++) {
             if (s->life) continue;
             s->life = SHOT_LIFE;
-            s->vx = (int8_t)(p->power ? SHOT_SPEED + 1 : SHOT_SPEED);
-            if (m->facing) s->vx = (int8_t)-s->vx;
-            /* from the muzzle of the arm cannon */
-            s->x = (uint16_t)(m->facing ? px - 4 : px + 12);
-            s->y = (uint8_t)(py + 4);
+            if (in & IN_AIM) {
+                /* overhead, from the raised cannon (muzzle x=13..14, at the top of the
+                 * frame; the frame is mirrored for facing left and for gravity up) */
+                s->vx = 0;
+                s->vy = (int8_t)(p->power ? SHOT_SPEED + 1 : SHOT_SPEED);
+                if (!m->g) s->vy = (int8_t)-s->vy;
+                s->x = (uint16_t)(m->facing ? px - 2 : px + 10);
+                s->y = (uint8_t)(m->g ? py + 14 : py - 6);
+            } else {
+                s->vx = (int8_t)(p->power ? SHOT_SPEED + 1 : SHOT_SPEED);
+                if (m->facing) s->vx = (int8_t)-s->vx;
+                s->vy = 0;
+                /* from the muzzle of the arm cannon */
+                s->x = (uint16_t)(m->facing ? px - 4 : px + 12);
+                s->y = (uint8_t)(py + 4);
+            }
             p->cd = (uint8_t)(p->power ? FIRE_CD + 3 : FIRE_CD);
             ev |= EV_SHOOT;
             break;

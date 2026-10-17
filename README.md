@@ -2,7 +2,7 @@
 
 <p align="center">
   <b>A gravity-flipping mech action game for the Game Boy and Game Boy Color.</b><br>
-  <i>Sister cartridge to Infinite Best, Open World and Speedy Purple Peter. In the spirit of Metal Storm.</i>
+  <i>Sister cartridge to Infinite Best, Open World and Speedy Purple Peter.</i>
 </p>
 
 <p align="center">
@@ -33,6 +33,7 @@ a station generated forever from a seed, with a boss every fourth stage.
 | **D-pad** | run |
 | **A** | jump (hold for height) |
 | **B** | fire the arm cannon (hold to repeat) |
+| **Up+B** | fire straight up (upside down, **Down+B** fires straight down) |
 | **Up+A** (or **SELECT**) | flip gravity: any time on the ground, once in the air |
 | **START** | pause |
 

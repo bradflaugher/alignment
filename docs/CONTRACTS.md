@@ -8,7 +8,7 @@ Change a contract here first, then on both sides.
 * A **stage** is one long corridor of 16x16 px cells, 16 cells tall (the full 256 px BG map
   height) and 96 to 128 cells wide (about 10 to 13 screens). Cell index is column-major:
   `SCELL(x, y) = x*16 + y`, so a column is 16 consecutive bytes.
-* Gravity is **down** or **up** (Metal Storm). Down = purple polarity, up = green polarity.
+* Gravity is **down** or **up**. Down = purple polarity, up = green polarity.
   Phase blocks of the gravity's colour are solid, the other colour is a ghost.
 * Stage *n* of seed *s* is always the same stage (`stage_gen(&S, s, n)`), on the host and on
   the Game Boy. The core physics (`mech_step`) is shared too, so the host's physics bot
@@ -87,7 +87,9 @@ enum { SPR_MECH_IDLE, SPR_MECH_IDLE2, SPR_MECH_WALK1, SPR_MECH_WALK2, SPR_MECH_F
        SPR_CURSOR, SPR_RING,                                 /* 8x8 (RING = TL quarter) */
        SPR_SHOT, SPR_SHOT_POWER, SPR_BOLT,                   /* 8x8 projectiles */
        SPR_TURRET, SPR_TURRET_FIRE,                          /* 16x16, floor-mounted, barrel right */
-       SPR_EXPLODE1, SPR_EXPLODE2, ... };                    /* 16x16 */
+       SPR_EXPLODE1, SPR_EXPLODE2,                           /* 16x16 */
+       SPR_MECH_SHOOT_UP,                                    /* 16x16, cannon raised (muzzle x=13..14, y=0) */
+       SPR_SHOT_UP, SPR_SHOT_POWER_UP, ... };                /* 8x8, travel up (Y flip = down) */
 
 /* boss art: the game copies one boss (32 tiles) into sprite tiles 96..127 */
 enum { BOSS_SENTINEL, BOSS_PISTON, BOSS_HIVE, NUM_BOSS_ART };
