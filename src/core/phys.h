@@ -31,6 +31,7 @@
 #define IN_JUMP_NEW 0x08    /* just pressed */
 #define IN_FLIP_NEW 0x10    /* just pressed */
 #define IN_FIRE 0x20        /* held (the cannon repeats) */
+#define IN_AIM 0x40         /* held: the cannon points overhead (away from the floor) */
 
 /* events of one step */
 #define EV_LAND 0x0001

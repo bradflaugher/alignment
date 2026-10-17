@@ -40,6 +40,7 @@ static uint8_t hud_msg_t;           /* a message is up in the HUD for this many 
 static uint8_t mech_hidden;
 static uint8_t demo_jheld;          /* (demo input: A held at the end of the last move) */
 static uint8_t shoot_t;             /* frames since the cannon fired (the firing pose) */
+static uint8_t aim_up;              /* the cannon points overhead this frame */
 static uint8_t hit_i, hit_t;        /* the enemy that was just hit flashes */
 static uint8_t boss_boom;           /* frames of the boss's death throes left */
 static uint8_t boss_seen;           /* the fight started this life (HUD bar) */
@@ -360,6 +361,7 @@ static void draw_mech(void)
     case POSE_DEAD: tile = SPR_MECH_DEAD; break;
     default: tile = shoot_t < 8 ? SPR_MECH_SHOOT : ((frame >> 5) & 1) ? SPR_MECH_IDLE2 : SPR_MECH_IDLE; break;
     }
+    if (aim_up && pose <= POSE_AIR) tile = SPR_MECH_SHOOT_UP;
     pal = pose == POSE_DEAD ? SPAL_DEAD : (mech.g == G_DOWN ? SPAL_MECH_P : SPAL_MECH_G);
     if (player.shield && (frame & 8)) pal = SPAL_WHITE;
     SPR(tile, (uint8_t)((pal) | FLIPS(mech.facing, mech.g == G_UP)));
@@ -375,19 +377,29 @@ static void draw_shots(void)
     uint16_t cx = (uint16_t)(cam_x + shake_x - 8);
     uint8_t cy = (uint8_t)(cam_y + shake_y - 16);
     uint8_t tile = player.power ? SPR_SHOT_POWER : SPR_SHOT;
+    uint8_t up = player.power ? SPR_SHOT_POWER_UP : SPR_SHOT_UP;
     uint8_t pal = mech.g ? SPAL_SPARK_G : SPAL_SPARK_P;
     for (i = 0; i < NSHOT; i++, s++, o++) {
+        if (!s->life) {
+            o->y = 0;
+            continue;
+        }
         /* (unsigned: anything off screen wraps past the limits) */
         ox = (uint16_t)(s->x - cx);
         oy = (uint8_t)(s->y - cy);
-        if (!s->life || ox >= 168 || oy >= 160) {
+        if (ox >= 168 || oy >= 160) {
             o->y = 0;
             continue;
         }
         o->y = oy;
         o->x = (uint8_t)ox;
-        o->tile = tile;
-        o->prop = (uint8_t)(pal | (s->vx < 0 ? S_FLIPX : 0));
+        if (s->vy) {
+            o->tile = up;
+            o->prop = (uint8_t)(pal | (s->vy > 0 ? S_FLIPY : 0));
+        } else {
+            o->tile = tile;
+            o->prop = (uint8_t)(pal | (s->vx < 0 ? S_FLIPX : 0));
+        }
     }
 }
 
@@ -633,8 +645,9 @@ static void stage_card(void)
         txt_hex(1, 10, 15, run.seed, PAL_DIM);
     }
     if (run.stage == 1) {
-        txt(1, 3, 9, "A    JUMP", PAL_UI);
-        txt(1, 3, 10, "B    FIRE", PAL_UI);
+        txt(1, 3, 8, "A    JUMP", PAL_UI);
+        txt(1, 3, 9, "B    FIRE", PAL_UI);
+        txt(1, 3, 10, "UP+B FIRE UP", PAL_UI);
         txt(1, 3, 11, "UP+A FLIP GRAVITY", PAL_GREEN);
         txt(1, 2, 13, "LAND ON DRONES TO", PAL_DIM);
         txt(1, 2, 14, "CRUSH THEM", PAL_DIM);
@@ -676,6 +689,7 @@ static void spawn(void)
     pose = POSE_IDLE;
     mech_hidden = 0;
     shoot_t = 255;
+    aim_up = 0;
     hit_t = 0;
     gfx_phase(G_DOWN);
     camera(1);
@@ -1047,7 +1061,8 @@ static uint8_t demo_bits(void)
 }
 
 /* Metal Storm's buttons: A jumps, B fires, Up (or Down) + A turns gravity over;
- * SELECT flips too */
+ * SELECT flips too.  Holding the D-pad toward the mech's head (Up, or Down with
+ * gravity up) aims the cannon overhead. */
 static uint8_t input_bits(void)
 {
     if (demo_on) return demo_bits();
@@ -1056,6 +1071,7 @@ static uint8_t input_bits(void)
     if (j & J_LEFT) in = IN_L;
     else if (j & J_RIGHT) in = IN_R;
     if (j & J_B) in |= IN_FIRE;
+    if (j & (mech.g == G_DOWN ? J_UP : J_DOWN)) in |= IN_AIM;
     if (j & J_A) in |= IN_JUMP;
     if (n & J_A) in |= (j & (J_UP | J_DOWN)) ? IN_FLIP_NEW : IN_JUMP_NEW;
     if (n & J_SELECT) in |= IN_FLIP_NEW;
@@ -1089,6 +1105,7 @@ uint8_t play_run(void) BANKED
             continue;
         }
         in = input_bits();
+        aim_up = (uint8_t)(in & IN_AIM);
         dbg_ly[0] = LY_REG;
         /* the world */
         stage_t++;

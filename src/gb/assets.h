@@ -118,13 +118,15 @@ extern const uint8_t anim_speed[NUM_ANIM];
 extern const uint8_t *const anim_data[NUM_ANIM];
 
 /* ---- sprites (8x8 OAM mode), tiles 0..127 at 0x8000 ---- */
-#define NUM_SPR_TILES 82
+#define NUM_SPR_TILES 88
 extern const uint8_t spr_tiles[NUM_SPR_TILES*16];
 /* sprite tile indices.  16x16 frames (MECH, BOT, CRATE, TURRET, EXPLODE)
    are 4 tiles TL,TR,BL,BR.  Mech frames (incl. MECH_SHOOT, cannon muzzle at
    x=15,y=7) face right with gravity down: OAM X flip for left, Y flip for
    gravity up.  TURRET: floor-mounted (base on row 15), barrel right: X flip
-   = left, Y flip = ceiling.  SHOT / SHOT_POWER travel right (X flip = left).
+   = left, Y flip = ceiling.  SHOT / SHOT_POWER travel right (X flip = left);
+   SHOT_UP / SHOT_POWER_UP travel up (Y flip = down).  MECH_SHOOT_UP aims
+   overhead (muzzle x=13..14, y=0).
    SPR_RING is the TL quarter of a 16x16 ring (draw 4 with X/Y flips).
    The rest are single 8x8 tiles.  Tiles BOSS_TILE_BASE..127 are boss art. */
 enum {
@@ -155,7 +157,10 @@ enum {
     SPR_TURRET = 66,
     SPR_TURRET_FIRE = 70,
     SPR_EXPLODE1 = 74,
-    SPR_EXPLODE2 = 78
+    SPR_EXPLODE2 = 78,
+    SPR_MECH_SHOOT_UP = 82,
+    SPR_SHOT_UP = 86,
+    SPR_SHOT_POWER_UP = 87
 };
 
 /* ---- boss art: the game copies one boss (2 frames of 32x32 = 32 tiles) into

@@ -13,7 +13,8 @@ sector is a text map: `assets/levels/sectorNN.txt` (format: the docstring at the
   ~4.5 px/frame. A flip works any time on the ground, and once in the air until it lands
   again. A flip is refused inside a phase block the new gravity would make solid.
 * **B** fires the arm cannon forward (3 shots on screen, ~1 shot / 9 frames, 1 damage;
-  the power shot does 2). Shots stop at walls.
+  the power shot does 2). Shots stop at walls. **Up+B** fires straight overhead (with
+  gravity up, **Down+B**): a ceiling crawler or a drone above is a target.
 * Falling onto an enemy along gravity (from above, or flipping onto a ceiling crawler)
   stomps it: instant kill (3 damage) and a bounce, with the air flip given back.
 * Hull: 3 hits (blinks after a hit). Plasma, lasers (when on), crushers and a slamming
@@ -68,8 +69,8 @@ Look at the PNG. Then look at it again as a player would see it 10 cells at a ti
    on its head near the end (introduce, develop, twist, conclude). Earlier ideas come back
    mixed in.
 2. **Use all 16 rows.** Upper and lower routes, rooms taller than a screen, shafts you
-   "fall" up by flipping, ceilings that are floors. Metal Storm's levels are mazes of
-   rooms, not corridors.
+   "fall" up by flipping, ceilings that are floors. A sector is a maze of rooms, not a
+   corridor.
 3. **Gravity is the star.** The best moments are only possible by flipping: crossing a
    plasma floor on the ceiling, flipping onto a ceiling crawler, dropping past a turret's
    row, threading phase blocks.
