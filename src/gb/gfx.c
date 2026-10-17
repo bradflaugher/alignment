@@ -63,7 +63,9 @@ void col_push(uint8_t cx)
     cq_n++;
 }
 
-/* 32 bytes down a map column (stride 32): de = dst, bc = src (sdcccall 1) */
+/* 32 bytes down a map column (stride 32): de = dst, bc = src (sdcccall 1), the source
+ * 32-byte aligned.  Unrolled, 7 cycles a byte: a column has to fit in VBlank with
+ * everything else, and VRAM writes made after it are lost on hardware. */
 static void copy_col(uint8_t *dst, const uint8_t *src) __naked
 {
     (void)dst;
@@ -71,38 +73,70 @@ static void copy_col(uint8_t *dst, const uint8_t *src) __naked
     __asm
         ld  h, d
         ld  l, e
-        ld  e, #32
-    00001$:
+        ld  de, #32
+        .rept 32
         ld  a, (bc)
-        inc bc
+        inc c
         ld  (hl), a
-        ld  a, l
-        add a, #32
-        ld  l, a
-        jr  nc, 00002$
-        inc h
-    00002$:
-        dec e
-        jr  nz, 00001$
+        add hl, de
+        .endm
         ret
     __endasm;
 }
 
+/* 64 bytes into Color palette RAM from index 0: de = src.  Unrolled, 4 cycles a byte
+ * (set_bkg_palette is several times slower, and a write after VBlank is lost) */
+static void bg_pal_put(const uint16_t *src) __naked
+{
+    (void)src;
+    __asm
+        ld  h, d
+        ld  l, e
+        ld  a, #0x80
+        ldh (_BCPS_REG), a
+        ld  c, #<_BCPD_REG
+        .rept 64
+        ld  a, (hl+)
+        ldh (c), a
+        .endm
+        ret
+    __endasm;
+}
+
+static void spr_pal_put(const uint16_t *src) __naked
+{
+    (void)src;
+    __asm
+        ld  h, d
+        ld  l, e
+        ld  a, #0x80
+        ldh (_OCPS_REG), a
+        ld  c, #<_OCPD_REG
+        .rept 64
+        ld  a, (hl+)
+        ldh (c), a
+        .endm
+        ret
+    __endasm;
+}
+
+/* half a cell column (one tile column) a VBlank: a whole one doesn't fit a DMG's */
+static uint8_t cq_half;
 static void col_write(void)
 {
     uint8_t cx = cq_c[cq_head];
-    uint8_t *d = (uint8_t *)(0x9800u + ((cx << 1) & 31));
-    const uint8_t *src = (const uint8_t *)(0xA000u + ((uint16_t)cx << 6));
+    uint8_t *d = (uint8_t *)(0x9800u + (((cx << 1) | cq_half) & 31));
+    const uint8_t *src = (const uint8_t *)(0xA000u + ((uint16_t)cx << 6) + (cq_half ? 32 : 0));
     SWITCH_RAM(2);
     copy_col(d, src);
-    copy_col(d + 1, src + 32);
     if (is_cgb) {
         SWITCH_RAM(3);
         VBK_REG = 1;
         copy_col(d, src);
-        copy_col(d + 1, src + 32);
         VBK_REG = 0;
     }
+    cq_half ^= 1;
+    if (cq_half) return;
     cq_head = (uint8_t)((cq_head + 1) & (COLQ - 1));
     cq_n--;
 }
@@ -111,8 +145,9 @@ static void col_write(void)
  * source is in the art bank */
 #define TQ 4
 static const uint8_t *tq_src[TQ];
-static uint8_t *tq_dst[TQ];
+static uint8_t tq_tile[TQ];
 static volatile uint8_t tq_head, tq_n;
+static uint8_t tq_half;             /* 2 tiles a VBlank: 4 don't fit a DMG's */
 
 static void tq_push(uint8_t tile, const uint8_t *src)
 {
@@ -120,37 +155,67 @@ static void tq_push(uint8_t tile, const uint8_t *src)
     while (tq_n >= TQ) wait_vbl_done();
     i = (uint8_t)((tq_head + tq_n) & (TQ - 1));
     tq_src[i] = src;
-    tq_dst[i] = (uint8_t *)(tile < 128 ? 0x9000u + ((uint16_t)tile << 4) : 0x8000u + ((uint16_t)tile << 4));
+    tq_tile[i] = tile;
     tq_n++;
+}
+
+/* vc_tiles tiles (16 bytes each) from src to dst: de = dst, bc = src.  Unrolled a tile
+ * at a time, 6 cycles a byte (memcpy is slower, and VBlank is short) */
+static uint8_t vc_tiles;
+static void vram_copy(uint8_t *dst, const uint8_t *src) __naked
+{
+    (void)dst;
+    (void)src;
+    __asm
+        ld  h, b
+        ld  l, c
+        ld  a, (_vc_tiles)
+        ld  c, a
+    00001$:
+        .rept 16
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        .endm
+        dec c
+        jr  nz, 00001$
+        ret
+    __endasm;
 }
 
 static void tq_write(void)
 {
     uint8_t b = CURRENT_BANK;
+    uint8_t t = (uint8_t)(tq_tile[tq_head] + (tq_half << 1));
+    const uint8_t *src = tq_src[tq_head] + (tq_half ? 32 : 0);
     SWITCH_ROM(BANK(assets));
-    {
-        /* 4 tiles; BG tiles 127 and 128 aren't next to each other in VRAM (0x97F0 /
-         * 0x8800), so a run of 4 across them is copied in two parts */
-        uint8_t *d = tq_dst[tq_head];
-        const uint8_t *src = tq_src[tq_head];
-        if (d >= (uint8_t *)0x97D0u && d < (uint8_t *)0x9800u) {
-            uint8_t n = (uint8_t)(0x9800u - (uint16_t)d);
-            memcpy(d, src, n);
-            memcpy((uint8_t *)0x8800u, src + n, (uint8_t)(64 - n));
-        } else {
-            memcpy(d, src, 64);
-        }
+    if (t == 127) {
+        /* BG tiles 127 and 128 aren't next to each other in VRAM (0x97F0 / 0x8800) */
+        vc_tiles = 1;
+        vram_copy((uint8_t *)0x97F0u, src);
+        vram_copy((uint8_t *)0x8800u, src + 16);
+    } else {
+        vc_tiles = 2;
+        vram_copy((uint8_t *)(t < 128 ? 0x9000u + ((uint16_t)t << 4) : 0x8000u + ((uint16_t)t << 4)), src);
     }
     SWITCH_ROM(b);
+    tq_half ^= 1;
+    if (tq_half) return;
     tq_head = (uint8_t)((tq_head + 1) & (TQ - 1));
     tq_n--;
 }
 
 /* ------------------------------------------------------------ VBlank */
 
-static void vbl_isr(void)
+/* VBlank jobs that ended after VBlank: on hardware their last writes are lost (PyBoy
+ * keeps them), so the ROM tests require 0 */
+uint8_t vbl_late;
+
+/* one job: the HUD row, the palettes (Color), half a map column or half an art copy.
+ * VRAM and palette writes made after VBlank are lost on hardware (not in PyBoy), so a
+ * DMG's VBlank fits one, a Color's (double speed) two. */
+static void vbl_job(void)
 {
-    /* a DMG's VBlank fits one column or one art copy or the HUD row; a Color's twice that */
     if (row_dirty) {
         uint8_t *d = (uint8_t *)0x9C00u, i;
         for (i = 0; i < 20; i++) d[i] = hud_t[i];
@@ -160,16 +225,32 @@ static void vbl_isr(void)
             VBK_REG = 0;
         }
         row_dirty = 0;
+    } else if (pal_dirty) {
+        /* (both palettes are written here, in VBlank, so nobody waits for one; only
+         * a Color sets pal_dirty) */
+        bg_pal_put(out_pal);
+        if (pal_dirty & 2) spr_pal_put(out_spr);
+        pal_dirty = 0;
     } else if (cq_n && stream_on) {
         col_write();
-        if (is_cgb) {
-            if (cq_n) col_write();
-            else if (tq_n) tq_write();
-        }
     } else if (tq_n) {
         tq_write();
-        if (is_cgb && tq_n) tq_write();
     }
+}
+
+static void vbl_isr(void)
+{
+    if (is_cgb) {
+        /* (the main loop may be writing attributes, VRAM bank 1, when this comes) */
+        uint8_t vbk = VBK_REG;
+        VBK_REG = 0;
+        vbl_job();
+        vbl_job();
+        VBK_REG = vbk;
+    } else {
+        vbl_job();
+    }
+    if (LY_REG < 144 && vbl_late < 255) vbl_late++;
     frame++;
     SCX_REG = (uint8_t)(scroll_x + shake_x);
     {
@@ -178,12 +259,6 @@ static void vbl_isr(void)
         if (shake_y < 0 && y > scroll_y) y = 0;
         else if (shake_y > 0 && y > SCY_MAX && scroll_y <= SCY_MAX) y = SCY_MAX;
         SCY_REG = y;
-    }
-    if (pal_dirty && is_cgb) {
-        /* (both palettes are written here, in VBlank, so nobody waits for one) */
-        set_bkg_palette(0, 8, out_pal);
-        if (pal_dirty & 2) set_sprite_palette(0, 8, out_spr);
-        pal_dirty = 0;
     }
     sound_tick();
 }
@@ -395,6 +470,12 @@ void txt_num(uint8_t win, uint8_t x, uint8_t y, uint16_t v, uint8_t digits, uint
         b[d] = c;
     }
     txt(win, x, y, b, pal);
+}
+
+void txt_score(uint8_t win, uint8_t x, uint8_t y, uint32_t sc, uint8_t pal)
+{
+    txt_num(win, x, y, (uint16_t)(sc / 1000u), 4, pal);
+    txt_num(win, (uint8_t)(x + 4), y, (uint16_t)(sc % 1000u), 3, pal);
 }
 
 void txt_hex(uint8_t win, uint8_t x, uint8_t y, uint16_t v, uint8_t pal)

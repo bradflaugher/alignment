@@ -454,7 +454,7 @@ static void draw_enemies(void)
                 rods++;
             }
         } else {
-            uint8_t t, fx, fy, pal = SPAL_BOT;
+            uint8_t t, fx, fy, pal = SPAL_BOT | S_PALETTE;     /* (DMG: OBP1) */
             if (q->kind == E_TURRET) {
                 age = (uint8_t)((uint8_t)(stage_t + (uint16_t)(e->phase << 2)) & 127);
                 t = age >= 8 && age < 16 ? SPR_TURRET_FIRE : SPR_TURRET;
@@ -519,7 +519,7 @@ static void draw_boss_body(void)
     int16_t sx = (int16_t)(boss.x - cam_x) - shake_x;
     int16_t sy = (int16_t)boss.y - (int16_t)cam_y - shake_y;
     OAM_item_t *rod = &shadow_OAM[SP_ROD];
-    pal = boss.flash & 2 ? SPAL_WHITE : SPAL_BOT;
+    pal = boss.flash & 2 ? SPAL_WHITE : SPAL_BOT | S_PALETTE;   /* (DMG: OBP1) */
     if (boss_boom && (frame & 2)) pal = SPAL_DEAD;
     if (boss.dead && !boss_boom) {
         for (k = 0; k < 16; k += 4) hide4((uint8_t)(SP_ENEMY + k));
@@ -716,6 +716,9 @@ static void stage_begin(void)
     else stage_gen(&stage, run.seed, run.stage);
     stage_card();
     t0 = frame;
+    /* (before the map is built: a lit checkpoint would carry over from the last stage) */
+    checked = 0;
+    render_checked = 0;
     render_prebuild(&stage);
     pal_set_deck(stage.deck);
     load_boss_art();
@@ -727,8 +730,6 @@ static void stage_begin(void)
     }
     fade_to(4);
     HIDE_WIN;
-    checked = 0;
-    render_checked = 0;
     fx_pend = 0;
     spawn_x = stage.start_x;
     spawn_y = stage.start_y;
@@ -877,6 +878,7 @@ static void boss_down(void)
     music_play(SONG_CLEAR);
     run_score(&run, SCORE_BOSS);
     column_changed(stage.arena.x1);
+    column_changed(stage.arena.x0);
     boss_boom = 96;
     fx_shake(6);
     flash(6, 1);
@@ -937,6 +939,7 @@ static uint8_t death(void)
     }
     spawn();
     map_fill();
+    hud_msg_t = 0;
     hud_full();
     frame_end();
     fade_to(0);
@@ -985,12 +988,14 @@ static void clear_stage(void)
     txt(1, 4, 5, "BONUS", PAL_DIM);
     txt_num(1, 10, 5, bonus, 5, PAL_UI);
     txt(1, 4, 7, "SCORE", PAL_DIM);
-    txt_num(1, 10, 7, (uint16_t)(run.score > 65535u ? 65535u : run.score), 5, PAL_GREEN);
+    txt_score(1, 10, 7, run.score, PAL_GREEN);
     SHOW_WIN;
+    HIDE_SPRITES;                   /* (the window doesn't cover sprites) */
     for (i = 0; i < 200; i++) {
         frames(1);
         if (i > 30 && (joy_new & (J_A | J_START))) break;
     }
+    SHOW_SPRITES;
 }
 
 /* ------------------------------------------------------------------ pause */
@@ -1014,6 +1019,7 @@ static uint8_t pause_menu(void)
         txt_hex(1, 10, 5, run.seed, PAL_UI);
     }
     SHOW_WIN;
+    HIDE_SPRITES;                   /* (the window doesn't cover sprites) */
     while (r == 0xFF) {
         put_tile(1, 5, 2, sel == 0 ? FONT_TILE('>') : TILE_BLANK, PAL_GREEN);
         put_tile(1, 5, 3, sel == 1 ? FONT_TILE('>') : TILE_BLANK, PAL_GREEN);
@@ -1027,10 +1033,13 @@ static uint8_t pause_menu(void)
     sfx_play(SFX_SELECT);
     HIDE_WIN;
     move_win(7, HUD_WY);
+    hud_msg_t = 0;
     hud_full();
     SHOW_WIN;
+    SHOW_SPRITES;
     music_set_muffle(0);
     play_state = PS_PLAY;
+    joy_new = 0;                    /* (the START that closed it must not open it again) */
     return r;
 }
 

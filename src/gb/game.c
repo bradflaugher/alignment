@@ -60,8 +60,7 @@ static void title_screen_draw(void)
     txt(0, 2, 8, "GRAVITY  STATION", PAL_UI);
     if (save.best_score) {
         txt(0, 1, 16, "HI", PAL_DIM);
-        txt_num(0, 4, 16, (uint16_t)(save.best_score / 100u), 5, PAL_GREEN);
-        txt(0, 9, 16, "00", PAL_GREEN);
+        txt_score(0, 4, 16, save.best_score, PAL_GREEN);
     }
     txt(0, 1, 17, BUILD_DATE + 2, PAL_DIM);
 }
@@ -182,12 +181,7 @@ static uint8_t game_over(void)
     txt(0, 3, 5, run.mode == MODE_CAMPAIGN ? "SECTOR" : "STAGE", PAL_DIM);
     txt_num(0, 13, 5, run.stage, 4, PAL_UI);
     txt(0, 3, 7, "SCORE", PAL_DIM);
-    {
-        /* up to 9 999 999 */
-        uint32_t sc = run.score;
-        txt_num(0, 10, 7, (uint16_t)(sc / 1000u), 4, PAL_GREEN);
-        txt_num(0, 14, 7, (uint16_t)(sc % 1000u), 3, PAL_GREEN);
-    }
+    txt_score(0, 10, 7, run.score, PAL_GREEN);
     txt(0, 3, 9, "CELLS", PAL_DIM);
     txt_num(0, 13, 9, run.cells, 4, PAL_UI);
     if (run.mode == MODE_ENDLESS) {
@@ -244,8 +238,7 @@ static void ending(void)
     for (i = 0; lines[i]; i++)
         txt(0, (uint8_t)((20 - strlen(lines[i])) >> 1), (uint8_t)(2 + i), lines[i], i == 7 ? PAL_GREEN : PAL_UI);
     txt(0, 3, 14, "SCORE", PAL_DIM);
-    txt_num(0, 10, 14, (uint16_t)(run.score / 100u > 65535u ? 65535u : run.score / 100u), 5, PAL_GREEN);
-    txt(0, 15, 14, "00", PAL_GREEN);
+    txt_score(0, 10, 14, run.score, PAL_GREEN);
     txt(0, 1, 16, "ENDLESS IS OPEN", PAL_PURPLE);
     if (run.score > save.best_score) save.best_score = run.score;
     save.campaign_done = 1;
