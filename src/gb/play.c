@@ -41,6 +41,7 @@ static uint8_t mech_hidden;
 static uint8_t demo_jheld;          /* (demo input: A held at the end of the last move) */
 static uint8_t shoot_t;             /* frames since the cannon fired (the firing pose) */
 static uint8_t aim_up;              /* the cannon points overhead this frame */
+static uint8_t shoot_up;            /* the last shot went overhead (the firing pose) */
 static uint8_t hit_i, hit_t;        /* the enemy that was just hit flashes */
 static uint8_t boss_boom;           /* frames of the boss's death throes left */
 static uint8_t boss_seen;           /* the fight started this life (HUD bar) */
@@ -361,7 +362,7 @@ static void draw_mech(void)
     case POSE_DEAD: tile = SPR_MECH_DEAD; break;
     default: tile = shoot_t < 8 ? SPR_MECH_SHOOT : ((frame >> 5) & 1) ? SPR_MECH_IDLE2 : SPR_MECH_IDLE; break;
     }
-    if (aim_up && pose <= POSE_AIR) tile = SPR_MECH_SHOOT_UP;
+    if ((aim_up || (shoot_up && shoot_t < 8)) && pose <= POSE_AIR) tile = SPR_MECH_SHOOT_UP;
     pal = pose == POSE_DEAD ? SPAL_DEAD : (mech.g == G_DOWN ? SPAL_MECH_P : SPAL_MECH_G);
     if (player.shield && (frame & 8)) pal = SPAL_WHITE;
     SPR(tile, (uint8_t)((pal) | FLIPS(mech.facing, mech.g == G_UP)));
@@ -689,7 +690,7 @@ static void spawn(void)
     pose = POSE_IDLE;
     mech_hidden = 0;
     shoot_t = 255;
-    aim_up = 0;
+    aim_up = shoot_up = 0;
     hit_t = 0;
     gfx_phase(G_DOWN);
     camera(1);
@@ -1122,6 +1123,7 @@ uint8_t play_run(void) BANKED
         if (ev & EV_SHOOT) {
             sfx_play(player.power ? SFX_SHOOT_POWER : SFX_SHOOT);
             shoot_t = 0;
+            shoot_up = aim_up;
         }
         if (ev & EV_LAND) {
             land_fx();
