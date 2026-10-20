@@ -622,7 +622,7 @@ static void frames(uint8_t n)
 
 static void stage_card(void)
 {
-    uint8_t d = (uint8_t)(stage.deck & 7);
+    uint8_t d = (uint8_t)(stage.deck & 7), y;
     char name[17];
     play_state = PS_CARD;
     gfx_hide_sprites();
@@ -631,34 +631,39 @@ static void stage_card(void)
     move_win(7, 0);
     clear_win();
     SHOW_WIN;
+    /* (the first stage also lists the controls: the title moves up to make room) */
+    y = run.stage == 1 ? 2 : 4;
     if (run.mode == MODE_CAMPAIGN) {
-        txt(1, 5, 4, "SECTOR", PAL_DIM);
-        txt_num(1, 12, 4, run.stage, 1, PAL_GREEN);
+        txt(1, 5, y, "SECTOR", PAL_DIM);
+        txt_num(1, 12, y, run.stage, 1, PAL_GREEN);
         sector_name((uint8_t)run.stage, name);
-        txt(1, (uint8_t)((20 - strlen(name)) >> 1), 6, name, PAL_PURPLE);
+        txt(1, (uint8_t)((20 - strlen(name)) >> 1), (uint8_t)(y + 2), name, PAL_PURPLE);
     } else {
-        txt(1, 5, 4, "STAGE", PAL_DIM);
-        txt_num(1, 11, 4, run.stage > 999 ? 999 : run.stage, 3, PAL_UI);
-        txt(1, 4, 6, "DECK", PAL_DIM);
-        txt_num(1, 9, 6, (uint8_t)(d + 1), 2, PAL_GREEN);
-        txt(1, 12, 6, deck_names[d], PAL_PURPLE);
-        txt(1, 5, 15, "SEED", PAL_DIM);
-        txt_hex(1, 10, 15, run.seed, PAL_DIM);
+        txt(1, 5, y, "STAGE", PAL_DIM);
+        txt_num(1, 11, y, run.stage > 999 ? 999 : run.stage, 3, PAL_UI);
+        txt(1, 4, (uint8_t)(y + 2), "DECK", PAL_DIM);
+        txt_num(1, 9, (uint8_t)(y + 2), (uint8_t)(d + 1), 2, PAL_GREEN);
+        txt(1, 12, (uint8_t)(y + 2), deck_names[d], PAL_PURPLE);
+        txt(1, 5, 16, "SEED", PAL_DIM);
+        txt_hex(1, 10, 16, run.seed, PAL_DIM);
     }
+    y = 12;
     if (run.stage == 1) {
-        txt(1, 3, 8, "A    JUMP", PAL_UI);
-        txt(1, 3, 9, "B    FIRE", PAL_UI);
-        txt(1, 3, 10, "UP+B FIRE UP", PAL_UI);
-        txt(1, 3, 11, "UP+A FLIP GRAVITY", PAL_GREEN);
-        txt(1, 2, 13, "LAND ON DRONES TO", PAL_DIM);
-        txt(1, 2, 14, "CRUSH THEM", PAL_DIM);
+        txt(1, 3, 7, "A    JUMP", PAL_UI);
+        txt(1, 3, 8, "B    FIRE", PAL_UI);
+        txt(1, 3, 9, "UP+B FIRE UP", PAL_UI);
+        txt(1, 3, 10, "UP+A FLIP GRAVITY", PAL_GREEN);
+        txt(1, 2, 12, "LAND ON DRONES TO", PAL_DIM);
+        txt(1, 2, 13, "CRUSH THEM", PAL_DIM);
+        y = 15;
     } else if (stage.featured != 0xFF) {
         txt(1, 4, 10, "NEW HAZARD:", PAL_HAZARD);
         txt(1, (uint8_t)((20 - strlen(mech_names[stage.featured])) >> 1), 11, mech_names[stage.featured], PAL_UI);
+        y = 13;
     }
     if (stage.arena.kind) {
-        txt(1, 6, 12, "WARNING", PAL_HAZARD);
-        txt(1, (uint8_t)((20 - strlen(boss_names[stage.arena.kind])) >> 1), 13, boss_names[stage.arena.kind], PAL_HAZARD);
+        txt(1, 6, y, "WARNING", PAL_HAZARD);
+        txt(1, (uint8_t)((20 - strlen(boss_names[stage.arena.kind])) >> 1), (uint8_t)(y + 1), boss_names[stage.arena.kind], PAL_HAZARD);
     }
     fade_to(0);
 }
@@ -976,19 +981,20 @@ static void clear_stage(void)
     if (!stage.arena.kind) music_play(SONG_CLEAR);
     sfx_play(all ? SFX_OPTIMAL : SFX_SELECT);
     HIDE_WIN;
-    move_win(7, 32);
+    /* (the window runs to the bottom of the screen: it covers all of it, the box centred) */
+    move_win(7, 0);
     clear_win();
-    draw_box(1, 2, 0, 16, 9, PAL_PURPLE);
-    txt(1, 4, 1, run.mode == MODE_CAMPAIGN ? "SECTOR CLEAR" : "STAGE CLEAR", PAL_GREEN);
-    put_tile(1, 4, 3, UI_CELL, PAL_GREEN);
-    txt_num(1, 6, 3, got, 2, PAL_UI);
-    txt(1, 8, 3, "/", PAL_DIM);
-    txt_num(1, 9, 3, stage.ncells, 2, PAL_UI);
-    if (all) txt(1, 12, 3, "ALL!", PAL_GREEN);
-    txt(1, 4, 5, "BONUS", PAL_DIM);
-    txt_num(1, 10, 5, bonus, 5, PAL_UI);
-    txt(1, 4, 7, "SCORE", PAL_DIM);
-    txt_score(1, 10, 7, run.score, PAL_GREEN);
+    draw_box(1, 2, 4, 16, 9, PAL_PURPLE);
+    txt(1, 4, 5, run.mode == MODE_CAMPAIGN ? "SECTOR CLEAR" : "STAGE CLEAR", PAL_GREEN);
+    put_tile(1, 4, 7, UI_CELL, PAL_GREEN);
+    txt_num(1, 6, 7, got, 2, PAL_UI);
+    txt(1, 8, 7, "/", PAL_DIM);
+    txt_num(1, 9, 7, stage.ncells, 2, PAL_UI);
+    if (all) txt(1, 12, 7, "ALL!", PAL_GREEN);
+    txt(1, 4, 9, "BONUS", PAL_DIM);
+    txt_num(1, 10, 9, bonus, 5, PAL_UI);
+    txt(1, 4, 11, "SCORE", PAL_DIM);
+    txt_score(1, 10, 11, run.score, PAL_GREEN);
     SHOW_WIN;
     HIDE_SPRITES;                   /* (the window doesn't cover sprites) */
     for (i = 0; i < 200; i++) {
@@ -1008,21 +1014,22 @@ static uint8_t pause_menu(void)
     music_set_muffle(1);
     sfx_play(SFX_SELECT);
     HIDE_WIN;
-    move_win(7, 48);
+    /* (the window runs to the bottom of the screen: it covers all of it, the box centred) */
+    move_win(7, 0);
     clear_win();
-    draw_box(1, 3, 0, 14, 7, PAL_PURPLE);
-    txt(1, 6, 0, " PAUSED ", PAL_GREEN);
-    txt(1, 6, 2, "RESUME", PAL_UI);
-    txt(1, 6, 3, "QUIT", PAL_UI);
+    draw_box(1, 3, 5, 14, run.mode == MODE_ENDLESS ? 9 : 7, PAL_PURPLE);
+    txt(1, 6, 5, " PAUSED ", PAL_GREEN);
+    txt(1, 6, 7, "RESUME", PAL_UI);
+    txt(1, 6, 9, "QUIT", PAL_UI);
     if (run.mode == MODE_ENDLESS) {
-        txt(1, 5, 5, "SEED", PAL_DIM);
-        txt_hex(1, 10, 5, run.seed, PAL_UI);
+        txt(1, 5, 11, "SEED", PAL_DIM);
+        txt_hex(1, 10, 11, run.seed, PAL_UI);
     }
     SHOW_WIN;
     HIDE_SPRITES;                   /* (the window doesn't cover sprites) */
     while (r == 0xFF) {
-        put_tile(1, 5, 2, sel == 0 ? FONT_TILE('>') : TILE_BLANK, PAL_GREEN);
-        put_tile(1, 5, 3, sel == 1 ? FONT_TILE('>') : TILE_BLANK, PAL_GREEN);
+        put_tile(1, 5, 7, sel == 0 ? FONT_TILE('>') : TILE_BLANK, PAL_GREEN);
+        put_tile(1, 5, 9, sel == 1 ? FONT_TILE('>') : TILE_BLANK, PAL_GREEN);
         wait_vbl_done();
         input_poll();
         fx_update();

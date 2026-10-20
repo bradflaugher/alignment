@@ -33,11 +33,12 @@ static void title_fx(uint8_t t)
         uint8_t col = q & 1, row = q >> 1, sr = fy ? 1 - row : row;
         set_sprite_tile(SP_MECH + q, (uint8_t)(tile + sr * 2 + col));
         set_sprite_prop(SP_MECH + q, (uint8_t)((t_g ? SPAL_MECH_G : SPAL_MECH_P) | (fy ? S_FLIPY : 0)));
-        move_sprite(SP_MECH + q, (uint8_t)(136 + col * 8 + 8), (uint8_t)(t_y + row * 8 + 16));
+        move_sprite(SP_MECH + q, (uint8_t)(144 + col * 8 + 8), (uint8_t)(t_y + row * 8 + 16));
     }
     if ((t & 7) == 0) {
         uint8_t x = (uint8_t)(fx_rand() % 160);
-        part_spawn(x, t_g ? 140 : 60, 0, t_g ? -24 : 24, SPR_STREAK, t_g ? SPAL_SPARK_G : SPAL_SPARK_P, 20);
+        /* (behind the text: S_PRIORITY shows a sprite only over the background's colour 0) */
+        part_spawn(x, t_g ? 140 : 60, 0, t_g ? -24 : 24, SPR_STREAK, (uint8_t)((t_g ? SPAL_SPARK_G : SPAL_SPARK_P) | S_PRIORITY), 20);
     }
 }
 
@@ -71,21 +72,21 @@ static void menu_draw(uint8_t sel)
 {
     uint8_t i;
     for (i = 0; i < 3; i++)
-        put_tile(0, 2, (uint8_t)(11 + i), i == sel ? FONT_TILE('>') : TILE_BLANK, PAL_GREEN);
-    txt(0, 4, 11, "CAMPAIGN", sel == 0 ? PAL_GREEN : PAL_UI);
+        put_tile(0, 1, (uint8_t)(11 + i), i == sel ? FONT_TILE('>') : TILE_BLANK, PAL_GREEN);
+    txt(0, 3, 11, "CAMPAIGN", sel == 0 ? PAL_GREEN : PAL_UI);
     if (save.sector > 1) {
-        put_tile(0, 13, 11, sel == 0 ? FONT_TILE('<') : TILE_BLANK, PAL_DIM);
-        txt(0, 14, 11, "S", PAL_DIM);
-        txt_num(0, 15, 11, sel_sector, 1, PAL_PURPLE);
-        put_tile(0, 16, 11, sel == 0 ? FONT_TILE('>') : TILE_BLANK, PAL_DIM);
+        put_tile(0, 12, 11, sel == 0 ? FONT_TILE('<') : TILE_BLANK, PAL_DIM);
+        txt(0, 13, 11, "S", PAL_DIM);
+        txt_num(0, 14, 11, sel_sector, 1, PAL_PURPLE);
+        put_tile(0, 15, 11, sel == 0 ? FONT_TILE('>') : TILE_BLANK, PAL_DIM);
     }
     if (endless_open()) {
-        txt(0, 4, 12, "ENDLESS", sel == 1 ? PAL_GREEN : PAL_UI);
-        txt(0, 4, 13, "ENTER SEED", sel == 2 ? PAL_GREEN : PAL_UI);
+        txt(0, 3, 12, "ENDLESS", sel == 1 ? PAL_GREEN : PAL_UI);
+        txt(0, 3, 13, "ENTER SEED", sel == 2 ? PAL_GREEN : PAL_UI);
     } else {
-        txt(0, 4, 12, "ENDLESS", PAL_DIM);
-        txt(0, 12, 12, "LOCKED", PAL_DIM);
-        txt(0, 4, 13, "CLEAR SECTOR 4", PAL_DIM);
+        txt(0, 3, 12, "ENDLESS", PAL_DIM);
+        txt(0, 11, 12, "LOCKED", PAL_DIM);
+        txt(0, 3, 13, "CLEAR SECTOR 4", PAL_DIM);
     }
 }
 
@@ -201,7 +202,7 @@ static uint8_t game_over(void)
         wait_vbl_done();
         input_poll();
         fx_update();
-        if ((t & 31) == 0) part_burst((uint16_t)(20 + (fx_rand() & 127)), (uint8_t)(20 + (fx_rand() & 63)), 6, SPR_STAR, SPAL_SPARK_P, 12, 0);
+        if ((t & 31) == 0) part_burst((uint16_t)(20 + (fx_rand() & 127)), (uint8_t)(20 + (fx_rand() & 63)), 6, SPR_STAR, SPAL_SPARK_P | S_PRIORITY, 12, 0);
         if (t > 60 && (joy_new & (J_A | J_START))) { cont = 1; sfx_play(SFX_SELECT); break; }
         if (t > 60 && (joy_new & J_B)) break;
     }
@@ -249,7 +250,7 @@ static void ending(void)
         input_poll();
         fx_update();
         title_fx(t);
-        if ((t & 15) == 0) part_burst((uint16_t)(8 + (fx_rand() & 127)), (uint8_t)(8 + (fx_rand() & 127)), 6, SPR_STAR, (t & 16) ? SPAL_SPARK_G : SPAL_SPARK_P, 12, 0);
+        if ((t & 15) == 0) part_burst((uint16_t)(8 + (fx_rand() & 127)), (uint8_t)(8 + (fx_rand() & 127)), 6, SPR_STAR, (uint8_t)(((t & 16) ? SPAL_SPARK_G : SPAL_SPARK_P) | S_PRIORITY), 12, 0);
         if (t > 240 && (joy_new & (J_A | J_START))) break;
     }
     fade_to(4);
