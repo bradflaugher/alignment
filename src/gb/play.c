@@ -299,6 +299,8 @@ static void map_fill(void)
     col_hi = (uint8_t)(col_lo + 13);
     if (col_hi >= stage.w) col_hi = (uint8_t)(stage.w - 1);
     ENABLE_RAM;
+    stream_on = 0;
+    col_reset();                    /* (nothing left over from the last map) */
     stream_on = 1;
     for (c = col_lo; c <= col_hi; c++) render_column(&stage, c);
     while (col_queued()) wait_vbl_done();
@@ -338,8 +340,17 @@ static void camera(uint8_t snap)
         if (d < -3) d = -3;
         cam_y = (uint8_t)(cam_y + d);
     }
-    scroll_x = (uint8_t)cam_x;
-    scroll_y = cam_y;
+}
+
+/* the camera goes to the screen together with the sprites drawn for it: if a frame's
+ * work runs past VBlank (a busy DMG frame), the old background stays with the old
+ * sprites, instead of the map sliding under them for a frame */
+static void camera_show(void)
+{
+    CRITICAL {
+        scroll_x = (uint8_t)cam_x;
+        scroll_y = cam_y;
+    }
 }
 
 /* ------------------------------------------------------------------ drawing */
@@ -595,6 +606,7 @@ static void frame_end(void)
     if (hit_t) hit_t--;
     if (shoot_t < 255) shoot_t++;
     play_ly = LY_REG;
+    camera_show();
     wait_vbl_done();
     /* a frame of play must take exactly one frame */
     if (play_state == PS_PLAY) {

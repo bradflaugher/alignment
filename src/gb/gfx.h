@@ -81,6 +81,7 @@ void part_update(void);
  * in VBlank, while stream_on */
 extern volatile uint8_t stream_on;
 void col_push(uint8_t cx);
+void col_reset(void);
 uint8_t col_queued(void);
 /* phase blocks show the gravity g; laser gates on / off */
 void gfx_phase(uint8_t g);
