@@ -2,8 +2,8 @@
 and autopilot code can run the ROM on a cycle-accurate emulator.
 
 Only the small API surface our tools use is provided: tick(), button_press/release,
-memory[addr] (reads cached per 256-byte page per frame), memory[bank, addr] for SRAM/VRAM
-bank 0, symbol_lookup(), screen.image, set_emulation_speed(), stop().
+memory[addr] (reads cached per 256-byte page per frame), memory[bank, addr] and
+memory[bank, a:b] for any VRAM / cartridge RAM bank, symbol_lookup(), screen.image, set_emulation_speed(), stop().
 """
 import io
 import os
@@ -29,7 +29,11 @@ class _Mem:
 
     def __getitem__(self, k):
         if isinstance(k, tuple):
-            k = k[1]
+            # (bank, address or slice): VRAM / cartridge RAM / ROM bank, whatever is mapped
+            bank, k = k
+            if isinstance(k, slice):
+                return list(self.e.raw(k.start, bank, k.stop - k.start))[::k.step or 1]
+            return self.e.raw(k, bank, 1)[0]
         if isinstance(k, slice):
             return [self[i] for i in range(k.start, k.stop, k.step or 1)]
         return self._page(k >> 8)[k & 0xFF]

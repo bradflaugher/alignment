@@ -29,7 +29,7 @@ GB_OBJS := $(patsubst src/core/%.c,$(OBJ)/core_%.o,$(CORE_SRC)) \
            $(OBJ)/assets.o $(OBJ)/music_data.o \
            $(patsubst src/gb/%.s,$(OBJ)/%_s.o,$(GB_ASM))
 
-.PHONY: FORCE all rom assets music test test-host test-assets test-rom screenshots maps stats clean
+.PHONY: FORCE all rom assets music test test-host test-assets test-rom test-mgba mgba screenshots maps stats clean
 
 all: rom
 
@@ -104,6 +104,17 @@ test-assets:
 
 test-rom: $(ROM) $(BUILD)/msgen
 	$(PYTHON) -m unittest discover -s tests -p 'test_rom.py' -v
+
+# optional: the same play-throughs (every sector with the bot's inputs, video memory
+# checked every frame) on headless mGBA, a second, cycle-accurate emulator. Needs
+# libmgba-dev (apt install libmgba-dev).
+mgba: $(BUILD)/mgba_server
+
+$(BUILD)/mgba_server: tools/mgba/mgba_server.c | $(BUILD)
+	$(CC) -O2 -o $@ $< -lmgba
+
+test-mgba: $(ROM) $(BUILD)/msgen $(BUILD)/mgba_server
+	ALIGNMENT_EMULATOR=mgba $(PYTHON) -m unittest discover -s tests -p 'test_rom.py' -v -k Play
 
 stats: $(BUILD)/msgen
 	$(BUILD)/msgen stats 10 100
