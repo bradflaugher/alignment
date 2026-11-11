@@ -129,6 +129,9 @@ def main():
         tag = 'cgb' if cgb else 'dmg'
         g = Game(cgb)
         g.run(240)
+        # (PRESS START blinks: take the picture while it is lit)
+        g.wait(lambda: g.bkg_text(5, 12, 11) == 'PRESS START', 120)
+        g.run(8)
         grab(g).save(os.path.join(OUT, '%s_title.png' % tag))
         for n in range(1, n_sectors + 1):
             g = Game(cgb)

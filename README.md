@@ -36,8 +36,11 @@ a station generated forever from a seed, with a boss every fourth stage.
 | **Up+B** | fire straight up (upside down, **Down+B** fires straight down) |
 | **Up+A** (or **SELECT**) | flip gravity: any time on the ground, once in the air |
 | **START** | pause |
+| **A+B+SELECT+START** | back to the title |
 
 Falling onto an enemy along gravity crushes it, with a bounce and your air flip back.
+A jump or a flip pressed a moment before you land is remembered and happens as you
+touch down.
 
 ## The station
 
@@ -52,6 +55,13 @@ Falling onto an enemy along gravity crushes it, with a bounce and your air flip 
 | 7 | Gravity Vault | phase-block puzzles | The Hive, angrier |
 | 8 | Station Core | everything at once | Mirror Mech, the final fight |
 
+A boss arena is one screen: the camera holds the whole room, so nothing in a fight
+happens out of sight. Everything that can hurt you warns first: a laser gate lights up
+before it burns, a turret's muzzle glows before it fires, a crusher shakes before it
+slams, a boss blinks before it shoots, and the Piston locks on (it hangs still and
+shakes over a blinking mark on the floor) before it comes down. Shots that hit closed
+armour clank and spark, so you know to wait for the opening.
+
 Power-ups hide in alcoves you reach with a clever flip: **P** power shot, **S** shield,
 **B** gravity bomb (your next flip wrecks everything near), **+** hull repair. The hull
 takes three hits; plasma, lasers and crushers take everything. Energy cells are score
@@ -64,6 +74,12 @@ Analogue Pocket, ModRetro Chromatic, GBA), with a crisp four-shade version for t
 original Game Boy. On Color hardware it runs at a steady 60 fps. An original Game Boy
 has half the speed and slows down briefly in the busiest fights, as the 8-bit classics
 did.
+
+On hardware, video memory can only be written while the screen is not drawing: the map,
+the HUD, the animated tiles and the palettes are all written from the VBlank handler (in
+cycle-counted pieces that fit an original Game Boy's VBlank), the LCD is never switched
+off after boot (that is a white flash on a real screen), and the tests check what
+actually reached video memory on every frame of play (see below).
 
 <p align="center">
   <img src="docs/screens/map_sector2.png" width="720" alt="The whole of sector 2, from the game's own tile map">
@@ -79,9 +95,16 @@ states, so the bot fights like a player, not a lawnmower. Then the ROM tests boo
 cartridge in an emulator, DMG and Color, feed it the bot's presses frame by frame, and
 require the same result.
 
+The emulator drops writes to video memory made while the LCD is drawing, as hardware
+does, so on every frame of those runs (and of a careless scripted pilot who dies, pauses
+and flips at random) the tests compare the map on screen, the HUD and every art tile
+with what the game's own data says should be there. `make test-mgba` plays the same runs
+on a second, cycle-accurate emulator (headless mGBA; optional, needs `libmgba-dev`).
+
 ```
 make                 # build/alignment.gb (GBDK-2020 4.3 in /opt/gbdk)
 make test            # host tests (levels, bot, generator, sound), asset tests, ROM tests (PyBoy)
+make test-mgba       # the play-throughs again on headless mGBA (optional: apt install libmgba-dev)
 make maps            # build/maps/sectorN.png: every sector as one picture
 build/msgen show s 3                        # a sector as text
 build/msgen replay s 3 $(build/msgen path s 3)   # watch the bot's run, move by move
@@ -104,7 +127,7 @@ GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on 
 and pull request: it checks the generated art, music and level sources match their
 inputs, runs the host tests (physics bot on every sector, 1800 generated stages, sound
 engine), builds the ROM, plays every sector in PyBoy on DMG and CGB with the bot's
-inputs, renders the screenshots and uploads the ROM, symbols and screens as an artifact.
+inputs and checking video memory, the save and the controls, renders the screenshots and uploads the ROM, symbols and screens as an artifact.
 
 When `main` goes green, the release job publishes the ROM as a release tagged with the
 build date (`2026.10.14`, the same date shown in the title screen's corner) and deletes
@@ -118,6 +141,6 @@ build on the same day replaces that day's files in place.
 | `src/core/` | portable C: physics, combat and bosses (`world.c`), sector loader, generator, run rules |
 | `src/gb/` | Game Boy front end: play loop, rendering, effects, menus, sound driver, save |
 | `assets/` | pixel art, music sources and the sector maps (`assets/levels/`) |
-| `tests/` | the physics bot, ROM tests (PyBoy), asset and sound tests |
-| `tools/` | `msgen`, level compiler, level viewer, asset and music generators, screenshots |
+| `tests/` | the physics bot, ROM tests (PyBoy; `romlib.VramWatch` checks video memory), asset and sound tests |
+| `tools/` | `msgen`, level compiler, level viewer, asset and music generators, screenshots, the mGBA harness (`tools/mgba/`) |
 | `docs/` | contracts between code and assets, level design guide, EverDrive guide |
