@@ -17,6 +17,38 @@ Change a contract here first, then on both sides.
 * Enemies run left to right in `Stage.enemy[]` (the game only scans the ones on screen) and
   move on the stage clock: everything that moves repeats every 512 frames.
 * Positions are in 1/16 px; the mech's hitbox is `HB_W x HB_H` inside its 16x16 sprite.
+* A boss arena is at most `ARENA_ROWS` (8) cells tall inside, so the camera can hold all
+  of it. The piston hangs still for `PISTON_LOCK(level)` frames before a slam (state 1,
+  `st` counts them) and only crushes once it is falling.
+* `ev_armour` is set on a frame a shot was turned away by armour (at `ev_tx`, `ev_ty`).
+
+## 1a. Video memory: who writes it, and when
+
+Hardware (and PyBoy, and mGBA) drops a write to VRAM or to a Color's palette RAM made
+while the LCD is drawing a line. The rules that keep every write inside a safe window:
+
+* **The VBlank handler** (`vbl_isr` in `gfx.c`) writes the HUD row, the Color palettes, an
+  original Game Boy's BGP / OBP registers, the streamed map columns and the art copies
+  (animations, phase blocks, laser gates), in jobs that each fit: one job a VBlank on a
+  DMG, two on a Color, half a map column or two tiles at a time, by unrolled assembly.
+  GBDK's own handler (the OAM copy) runs first and takes about a quarter of a DMG's
+  VBlank. The handler counts jobs that end after VBlank in `vbl_late`: the ROM tests
+  require 0.
+* **Nothing in the main loop may hold interrupts off** for more than a few instructions
+  (`CRITICAL` around a couple of stores only): a VBlank interrupt that starts late ends
+  late. Work the values out first, store them inside.
+* **The main loop** writes VRAM only through GBDK's `set_bkg_tiles` / `set_win_tiles` /
+  `set_bkg_data` / `set_sprite_data`, which wait for the LCD before every byte (and GBDK's
+  interrupt return waits too, so a write that was interrupted is still safe). Never a
+  bare `while (STAT_REG & 2);` followed by C statements. Text screens, the stage card,
+  the pause box, a cell picked up (`render_cell`) and art loads go this way.
+* **The LCD stays on** after boot: switching it off shows as a white flash on a real
+  screen. Big art loads happen with the screen faded to black.
+* The scroll registers are set in VBlank from `scroll_x` / `scroll_y`, which the play
+  loop sets once per frame after the sprites are drawn (`camera_show`).
+* `tests/romlib.py`'s `VramWatch` compares, every frame of play, the visible map with
+  the prebuilt one in cartridge RAM, the HUD row with `hud_t`, and the art tiles with the
+  ROM. Keep it passing on both machines.
 
 ## 2. BG tile memory (LCDC bit 4 = 0: BG/window tiles at 0x8800-0x97FF, signed)
 

@@ -16,7 +16,7 @@ BANKREF_EXTERN(assets)
 uint8_t is_cgb;
 volatile uint8_t frame;
 uint8_t joy, joy_prev, joy_new;
-uint8_t scroll_x, scroll_y;
+uint8_t scroll_x, scroll_y;     /* the BG scroll the next VBlank shows (scroll_set) */
 #define SCY_MAX (256 - HUD_WY)    /* the lowest camera: the HUD covers the rest */
 int8_t shake_x, shake_y;
 
@@ -39,6 +39,8 @@ static volatile uint8_t pal_dirty;
 static uint8_t rnd_s = 0x5A;
 static uint8_t a_on;            /* tile animations run (room art loaded) */
 static uint8_t a_door_off;      /* the laser gates are off: their animation rests */
+static uint8_t laser_shown = 1, ls_want = 1;     /* the gates' art: as drawn, as wanted */
+static uint8_t ph_want, ph_shown = 0xFF;         /* the phase blocks' art (0xFF: not known, after a load) */
 
 /* ------------------------------------------------------------ streaming */
 
@@ -49,11 +51,22 @@ static uint8_t a_door_off;      /* the laser gates are off: their animation rest
 #define COLQ 8
 static uint8_t cq_c[COLQ];
 static volatile uint8_t cq_head, cq_n;
+static uint8_t cq_half;         /* half a cell column (one tile column) a VBlank: a whole one doesn't fit a DMG's */
 volatile uint8_t stream_on;
 
 uint8_t col_queued(void)
 {
     return cq_n;
+}
+
+/* forget what is queued (a new map is about to be drawn; called with stream_on clear) */
+void col_reset(void)
+{
+    CRITICAL {
+        cq_n = 0;
+        cq_head = 0;
+        cq_half = 0;
+    }
 }
 
 void col_push(uint8_t cx)
@@ -120,8 +133,6 @@ static void spr_pal_put(const uint16_t *src) __naked
     __endasm;
 }
 
-/* half a cell column (one tile column) a VBlank: a whole one doesn't fit a DMG's */
-static uint8_t cq_half;
 static void col_write(void)
 {
     uint8_t cx = cq_c[cq_head];
@@ -205,7 +216,22 @@ static void tq_write(void)
     tq_n--;
 }
 
+static void tq_flush(uint8_t drop)
+{
+    if (drop) {
+        CRITICAL {
+            tq_n = 0;
+            tq_head = 0;
+            tq_half = 0;
+        }
+        return;
+    }
+    while (tq_n) wait_vbl_done();
+}
+
 /* ------------------------------------------------------------ VBlank */
+
+static void dmg_pal_put(void);
 
 /* VBlank jobs that ended after VBlank: on hardware their last writes are lost (PyBoy
  * keeps them), so the ROM tests require 0 */
@@ -248,6 +274,7 @@ static void vbl_isr(void)
         vbl_job();
         VBK_REG = vbk;
     } else {
+        if (pal_dirty) dmg_pal_put();
         vbl_job();
     }
     if (LY_REG < 144 && vbl_late < 255) vbl_late++;
@@ -271,11 +298,27 @@ uint8_t fx_rand(void)
     return (uint8_t)(rnd_s + frame);
 }
 
+/* A + B + SELECT + START held together: back to the title, as on every cartridge
+ * (there is no reset button on a Game Boy, and a flash cart's menu is a power cycle
+ * away). The save is only ever written in one piece elsewhere, so nothing is lost. */
+#define RESET_KEYS (J_A | J_B | J_SELECT | J_START)
+
+static void soft_reset(void)
+{
+    stream_on = 0;
+    DISABLE_RAM;
+    music_stop();
+    fade_to(4);
+    while (joypad()) wait_vbl_done();
+    reset();
+}
+
 void input_poll(void)
 {
     joy_prev = joy;
     joy = joypad();
     joy_new = (uint8_t)(joy & ~joy_prev);
+    if ((joy & RESET_KEYS) == RESET_KEYS) soft_reset();
 }
 
 void wait_frames(uint8_t n)
@@ -288,29 +331,11 @@ void wait_frames(uint8_t n)
 
 /* ------------------------------------------------------------ tiles */
 
-static void set_vram_tile(uint8_t i, const uint8_t *src);
-
-/* Big loads happen with the LCD off (title / room art); small ones (animation frames,
- * always tiles >= 128) go through set_sprite_data: tiles 128-255 are shared by sprites
- * and the BG, and that routine waits for VRAM to be free. */
+/* BG tile data, with the LCD on or off: GBDK's set_bkg_data waits for VRAM to be free
+ * before every byte and knows the 0x8800 addressing (tiles 128..255 at 0x8800). */
 void bg_tile_data(uint8_t first, uint8_t n, const uint8_t *src)
 {
-    uint8_t k;
-    if (first >= 128) {
-        set_sprite_data(first, n, src);
-        return;
-    }
-    k = (uint8_t)(128 - first);
-    if (k > n) k = n;
-    if (LCDC_REG & LCDCF_ON) {
-        /* (never happens with the LCD on in practice; keep it safe anyway) */
-        uint8_t i;
-        for (i = 0; i < k; i++)
-            set_vram_tile(first + i, src + ((uint16_t)i << 4));
-    } else {
-        memcpy((uint8_t *)(0x9000u + ((uint16_t)first << 4)), src, (uint16_t)k << 4);
-    }
-    if (n > k) set_sprite_data(128, (uint8_t)(n - k), src + ((uint16_t)k << 4));
+    set_bkg_data(first, n, src);
 }
 
 static void load_common(void)
@@ -328,21 +353,22 @@ static void load_common(void)
     ASSETS_OUT();
 }
 
-static void set_vram_tile(uint8_t i, const uint8_t *src)
-{
-    uint8_t *d = (uint8_t *)(0x9000u + ((uint16_t)i << 4));
-    uint8_t j;
-    for (j = 0; j < 16; j++) set_vram_byte(d + j, src[j]);
-}
+/* The art copies still waiting for a VBlank are written (or dropped: `drop`) before
+ * the tiles under them are replaced. */
+static void tq_flush(uint8_t drop);
 
-/* both called with the screen faded to black: the LCD goes off for the copy */
+/* Both are called with the screen faded to black and the LCD left ON: switching it off
+ * shows as a white flash on real hardware (a DMG's panel goes lighter than white). */
 void gfx_load_play_tiles(void)
 {
     ASSETS_IN();
-    DISPLAY_OFF;
+    a_on = 0;
+    tq_flush(1);
     bg_tile_data(TILE_ART_BASE, NUM_ART_TILES, art_tiles);
-    DISPLAY_ON;
     ASSETS_OUT();
+    laser_shown = ls_want = 1;      /* (the art just loaded shows the gates on) */
+    a_door_off = 0;
+    ph_shown = 0xFF;                /* (and the phase blocks as the art file has them) */
     anim_reset();
 }
 
@@ -350,9 +376,8 @@ void gfx_load_title_tiles(void)
 {
     ASSETS_IN();
     a_on = 0;
-    DISPLAY_OFF;
+    tq_flush(1);
     bg_tile_data(TILE_ART_BASE, LOGO_NTILES, logo_tiles);
-    DISPLAY_ON;
     ASSETS_OUT();
 }
 
@@ -387,9 +412,14 @@ void gfx_init(void)
     clear_bkg();
     clear_win();
     gfx_hide_sprites();
-    fade_level = 0;
+    fade_level = 4;                 /* (black: the title fades in) */
     pal_apply();
-    if (is_cgb) set_sprite_palette(0, 8, spr_pal);
+    if (is_cgb) {
+        /* (the LCD is off: palette RAM is free; the title fades in from this black) */
+        bg_pal_put(out_pal);
+        spr_pal_put(out_spr);
+        pal_dirty = 0;
+    }
     scroll_x = scroll_y = 0;
     CRITICAL {
         add_VBL(vbl_isr);
@@ -530,6 +560,17 @@ void put_block(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t *tiles,
 
 /* ------------------------------------------------------------ palettes */
 
+/* an original Game Boy's three palette registers, as the next VBlank sets them */
+static uint8_t d_pal[3];
+
+static void dmg_pal_put(void)
+{
+    BGP_REG = d_pal[0];
+    OBP0_REG = d_pal[1];
+    OBP1_REG = d_pal[2];
+    pal_dirty = 0;
+}
+
 static uint16_t scale(uint16_t c, uint8_t l)
 {
     uint8_t r = (uint8_t)(c & 31), g = (uint8_t)((c >> 5) & 31), b = (uint8_t)((c >> 10) & 31);
@@ -556,9 +597,24 @@ void pal_apply(void)
 {
     uint8_t i;
     if (!is_cgb) {
-        BGP_REG = dmg_shift(DMG_BGP, fade_level);
-        OBP0_REG = dmg_shift(DMG_OBP0, fade_level);
-        OBP1_REG = dmg_shift(DMG_OBP1, fade_level);
+        /* (the registers are written in VBlank: a palette changed mid-frame shows as
+         * a band across the screen, on hardware and in the fade or flash it is part of) */
+        uint8_t bgp = DMG_BGP, o0 = DMG_OBP0, o1 = DMG_OBP1;
+        if (fade_level) {
+            bgp = dmg_shift(bgp, fade_level);
+            o0 = dmg_shift(o0, fade_level);
+            o1 = dmg_shift(o1, fade_level);
+        }
+        if (flash_t) bgp = flash_white ? 0x00 : 0x1A;
+        /* (worked out first: the VBlank interrupt must never be held off for long, or
+         * its own work runs past VBlank) */
+        CRITICAL {
+            d_pal[0] = bgp;
+            d_pal[1] = o0;
+            d_pal[2] = o1;
+            pal_dirty = 1;
+        }
+        if (!(LCDC_REG & LCDCF_ON)) dmg_pal_put();
         return;
     }
     for (i = 0; i < 32; i++) {
@@ -604,8 +660,7 @@ void flash(uint8_t frames, uint8_t white)
 {
     flash_t = frames;
     flash_white = white;
-    if (is_cgb) pal_apply();
-    else BGP_REG = white ? 0x00 : 0x1A;
+    pal_apply();
 }
 
 /* ------------------------------------------------------------ effects */
@@ -627,10 +682,7 @@ void fx_update(void)
         shake_x = shake_y = 0;
     }
     if (flash_t) {
-        if (!--flash_t) {
-            if (is_cgb) pal_apply();
-            else BGP_REG = dmg_shift(DMG_BGP, fade_level);
-        }
+        if (!--flash_t) pal_apply();
     }
     part_update();
     anim_update();
@@ -858,6 +910,8 @@ static uint8_t a_frame[NUM_ANIM], a_timer[NUM_ANIM];
 static uint8_t a_frames_r[NUM_ANIM], a_speed_r[NUM_ANIM], a_first[NUM_ANIM];
 static uint8_t a_cursor;
 
+static void art_sync(void);
+
 void anim_reset(void)
 {
     uint8_t i;
@@ -878,6 +932,7 @@ void anim_update(void)
     /* every timer runs; at most one animation is copied per frame (64 bytes) */
     uint8_t i, n, done = 0;
     if (!a_on) return;
+    art_sync();
     for (i = 0; i < NUM_ANIM; i++)
         if (a_timer[i] < 255) a_timer[i]++;
     if (tq_n) return;               /* the copy queue is busy: next frame */
@@ -900,7 +955,12 @@ void anim_update(void)
 /* ------------------------------------------------------------ tile swaps */
 
 /* Phase blocks are always drawn with their "on" tiles; when gravity turns, the art of
- * those tile slots is swapped, so every block on screen changes at once. */
+ * those tile slots is swapped, so every block on screen changes at once. The laser
+ * gates blink the same way. The game only says what it wants shown; the copies are
+ * queued when the VBlank queue has room (never waiting for it: two quick flips would
+ * stall the game for frames), and a state that changed back before it was drawn is
+ * never copied at all. */
+
 static void copy_mt_art(uint8_t dst_mt, uint8_t src_mt)
 {
     /* (both metatiles own 4 consecutive tiles) */
@@ -909,19 +969,31 @@ static void copy_mt_art(uint8_t dst_mt, uint8_t src_mt)
     ASSETS_OUT();
 }
 
-void gfx_phase(uint8_t g)
+static void art_sync(void)
 {
-    copy_mt_art(MT_PHASE_P_ON, g ? MT_PHASE_P_OFF : MT_PHASE_P_ON);
-    copy_mt_art(MT_PHASE_G_ON, g ? MT_PHASE_G_ON : MT_PHASE_G_OFF);
+    if (ph_shown != ph_want && tq_n <= TQ - 2) {
+        uint8_t g = ph_want;
+        ph_shown = g;
+        copy_mt_art(MT_PHASE_P_ON, g ? MT_PHASE_P_OFF : MT_PHASE_P_ON);
+        copy_mt_art(MT_PHASE_G_ON, g ? MT_PHASE_G_ON : MT_PHASE_G_OFF);
+    }
+    if (laser_shown != ls_want && tq_n < TQ) {
+        laser_shown = ls_want;
+        a_door_off = (uint8_t)!ls_want;
+        copy_mt_art(MT_DOOR_CLOSED, ls_want ? MT_DOOR_CLOSED : MT_DOOR_OPEN);
+    }
 }
 
-static uint8_t laser_shown = 1;
+void gfx_phase(uint8_t g)
+{
+    ph_want = g;
+    art_sync();
+}
+
 void gfx_laser(uint8_t on)
 {
-    if (on == laser_shown) return;
-    laser_shown = on;
-    a_door_off = (uint8_t)!on;
-    copy_mt_art(MT_DOOR_CLOSED, on ? MT_DOOR_CLOSED : MT_DOOR_OPEN);
+    ls_want = on;
+    art_sync();
 }
 
 /* a boss's 32 tiles into sprite tiles BOSS_TILE_BASE.. (bank 0: it maps the art bank) */

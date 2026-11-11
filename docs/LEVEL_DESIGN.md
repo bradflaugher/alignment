@@ -17,6 +17,7 @@ sector is a text map: `assets/levels/sectorNN.txt` (format: the docstring at the
   gravity up, **Down+B**): a ceiling crawler or a drone above is a target.
 * Falling onto an enemy along gravity (from above, or flipping onto a ceiling crawler)
   stomps it: instant kill (3 damage) and a bounce, with the air flip given back.
+* A jump or flip pressed up to 6 frames early (still in the air) happens on landing.
 * Hull: 3 hits (blinks after a hit). Plasma, lasers (when on), crushers and a slamming
   boss are instant death. Three lives, a checkpoint `C` halfway, 25 cells = extra life.
 
@@ -27,13 +28,13 @@ sector is a text map: `assets/levels/sectorNN.txt` (format: the docstring at the
 | `#` | wall |
 | `~` | plasma: death on touch |
 | `P` / `G` | phase blocks: purple solid while gravity is DOWN, green while gravity is UP |
-| `L` | laser gate: on 72 frames, off 56 (all lasers share the rhythm) |
+| `L` | laser gate: on 72 frames, off 56 (all lasers share the rhythm); drawn lit 8 frames before it burns |
 | `o` | energy cell (score; 12-25 a sector) |
 | `p s b r` | power shot, shield (soaks a hit), gravity bomb (next flip wrecks every enemy near), repair (+1 hull) |
 | `= - \| O * %` | background: girder, pipe, vertical pipe, window, light, grate (never solid) |
 | `c` / `k` | crawler on the floor / hanging from the ceiling: patrols up to 4 cells each way, 2 hp |
 | `v` | hover drone: bobs from its cell down to the first solid cell, 1 hp |
-| `X` | crusher: slams from its cell to the floor (invulnerable; timing obstacle) |
+| `X` | crusher: slams from its cell to the floor (invulnerable; timing obstacle); shakes before it slams |
 | `< >` / `{ }` | turret on floor / ceiling firing left / right: a bolt along its row every ~2 s, 3 hp |
 | `S C E` | start (needs floor), checkpoint, exit gate column |
 | `d D B` | arena entry door (open, seals behind you), exit door (opens when the boss dies), boss's top-left cell |
@@ -43,12 +44,13 @@ sector is a text map: `assets/levels/sectorNN.txt` (format: the docstring at the
 * Width at most 128 columns, exactly 16 rows. At most 24 enemies.
 * **Never more than 4 enemies inside any 10-column window** (the screen draws 4).
 * The arena: a closed room, entry door `d` column reaching the arena floor, exit door `D`
-  column, ceiling row and floor row solid across, at least 8 (best 12) columns inside, no
-  enemies inside. The cell left of the entry door on the floor row is the respawn spot
+  column, ceiling row and floor row solid across, at least 8 (best 12) columns inside, **at
+  most 8 rows inside** (the camera holds the room's full height on screen during the fight; it still pans sideways in a room wider than 10 columns: 8
+  cells are 128 of the screen's 136 px), no enemies inside. The cell left of the entry door on the floor row is the respawn spot
   (empty, floor below). Boss start `B`: SENTINEL / TWIN on the floor at the right
   (`B` = (exit door x - 3, floor row - 2)); PISTON hanging at the ceiling in the middle
   (`B` = (middle, ceiling row + 1)); HIVE floating in the middle (ceiling row + 3).
-  Use ceiling row 2 and floor row 13 unless you have a reason.
+  Use ceiling row 4 and floor row 13 unless you have a reason.
 * `build/msgen sbot` must finish every sector: the physics bot plays the real game code
   with real buttons, never taking a hit. Its path must stay under 1536 moves (`msgen path
   s N | wc -c`): about 100 s of play. If the bot can't do it, a human will hate it.

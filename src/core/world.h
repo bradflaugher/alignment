@@ -82,6 +82,15 @@ extern Near near[MAX_NEAR];
 #define EV2_BOSS_FIRE 0x40
 #define EV2_SLAM 0x80       /* the piston hit the floor */
 extern uint8_t ev2;
+/* a shot was turned away by armour (a shut boss, a crusher) this frame, at pixel
+ * (ev_tx, ev_ty); a shot stopped by a wall sets only EV2_TINK */
+extern uint8_t ev_armour;
+extern uint16_t ev_tx;
+extern uint8_t ev_ty;
+
+/* the piston locks on before it slams: it hangs still for this many frames (state 1,
+ * st counts them), the warning a player gets */
+#define PISTON_LOCK(level) ((uint8_t)((level) > 1 ? 14 : 20))
 extern uint16_t ev_kx;      /* the centre of the enemy of an EV_KILL / EV_HIT, px */
 extern uint8_t ev_ky;
 

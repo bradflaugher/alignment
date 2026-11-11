@@ -168,7 +168,7 @@ static uint8_t seed_entry(uint16_t *seed)
 /* returns 1 to continue (the same sector or stage, three new mechs) */
 static uint8_t game_over(void)
 {
-    uint8_t t, cont = 0;
+    uint8_t t, wait = 60, cont = 0;
     gfx_hide_sprites();
     part_clear();
     fade_to(4);
@@ -203,8 +203,10 @@ static uint8_t game_over(void)
         input_poll();
         fx_update();
         if ((t & 31) == 0) part_burst((uint16_t)(20 + (fx_rand() & 127)), (uint8_t)(20 + (fx_rand() & 63)), 6, SPR_STAR, SPAL_SPARK_P | S_PRIORITY, 12, 0);
-        if (t > 60 && (joy_new & (J_A | J_START))) { cont = 1; sfx_play(SFX_SELECT); break; }
-        if (t > 60 && (joy_new & J_B)) break;
+        /* (buttons count after a second, and from then on: t itself wraps) */
+        if (wait) { wait--; continue; }
+        if (joy_new & (J_A | J_START)) { cont = 1; sfx_play(SFX_SELECT); break; }
+        if (joy_new & J_B) break;
     }
     fade_to(4);
     return cont;
@@ -226,7 +228,7 @@ static void ending(void)
         "THANK YOU, PILOT.",
         0
     };
-    uint8_t i, t = 0;
+    uint8_t i, t = 0, wait = 240;
     gfx_hide_sprites();
     part_clear();
     fade_to(4);
@@ -251,7 +253,9 @@ static void ending(void)
         fx_update();
         title_fx(t);
         if ((t & 15) == 0) part_burst((uint16_t)(8 + (fx_rand() & 127)), (uint8_t)(8 + (fx_rand() & 127)), 6, SPR_STAR, (uint8_t)(((t & 16) ? SPAL_SPARK_G : SPAL_SPARK_P) | S_PRIORITY), 12, 0);
-        if (t > 240 && (joy_new & (J_A | J_START))) break;
+        /* (t wraps: counting on it left 15 frames in every 256 in which A did anything) */
+        if (wait) wait--;
+        else if (joy_new & (J_A | J_START)) break;
     }
     fade_to(4);
 }

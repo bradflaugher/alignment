@@ -55,6 +55,7 @@ OUT = os.path.join(ROOT, 'src', 'core', 'level_data.h')
 SH = 16
 SW_MAX = 128
 MAX_ENEMIES = 24
+ARENA_ROWS = 8      # src/core/stage.h
 
 # terrain values: must match src/core/stage.h
 T = dict(EMPTY=0, WALL=1, PLASMA=2, PHASE_P=3, PHASE_G=4, CELL=5, CHECK=6, EXIT=7, LASER=8,
@@ -239,6 +240,8 @@ def compile_level(path):
         for x in range(ax0 + 1, ax1):
             if not solid_floor(at(x, top)) or not solid_floor(at(x, bot)):
                 raise LevelError('%s: the arena needs a solid ceiling (row %d) and floor (row %d) across' % (name, top, bot))
+        if bot - top - 1 > ARENA_ROWS:
+            raise LevelError('%s: the arena is %d rows tall inside (at most %d: the camera holds all of it on screen)' % (name, bot - top - 1, ARENA_ROWS))
         if ax1 - ax0 - 1 < 8:
             raise LevelError('%s: the arena is too narrow (at least 8 columns inside)' % name)
         if any(ax0 < e[1] < ax1 or ax0 < e[2] < ax1 for e in enemies):

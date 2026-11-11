@@ -39,11 +39,12 @@ SD card
 1. Put the microSD card into the EverDrive, and the EverDrive into the handheld (label facing out on a Chromatic, same as any cartridge).
 2. Power on. The EverDrive menu appears.
 3. Go to the folder, highlight **Alignment**, and press **A**. The game boots straight to the title screen.
-4. Pick **RUN** (roguelike mode, energy on the line) or **ZEN** (endless and relaxed; your sector is saved).
+4. Press **START**, then pick **CAMPAIGN** (Left / Right chooses any sector you have reached). **ENDLESS** opens once sector 4 is cleared.
+5. **A + B + SELECT + START** together goes back to the title at any time.
 
 ## 5. Saves
 
-The game keeps its records and your Zen progress in battery-backed save RAM. The EverDrive copies that RAM to `GBCSYS/SAVE/` as a `.srm` file whose name matches the ROM (`Alignment.srm`). Cart save states, from the in-game menu, go in `GBCSYS/SNAP/` and are not the game's own progress.
+The game keeps the furthest sector you have reached, the best score and the best endless stage in battery-backed save RAM (two copies, so a write cut short by a power-off loses nothing). The EverDrive copies that RAM to `GBCSYS/SAVE/` as a `.srm` file whose name matches the ROM (`Alignment.srm`). Cart save states, from the in-game menu, go in `GBCSYS/SNAP/` and are not the game's own progress.
 
 - Progress is written the moment you clear a sector, so you can just switch off the handheld.
 - EverDrive models differ in *when* they copy save RAM to the SD card:

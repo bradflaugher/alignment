@@ -450,8 +450,9 @@ static void build_section(uint8_t m, uint16_t *used)
     }
 }
 
-/* every fourth stage ends in a boss arena: a tall closed room between two blast doors */
-#define ARENA_TOP 2
+/* every fourth stage ends in a boss arena: a closed room between two blast doors, 8
+ * cells tall inside, so the whole fight fits on the screen (see ARENA_ROWS) */
+#define ARENA_TOP (ARENA_BOT - ARENA_ROWS - 1)
 #define ARENA_BOT 13
 #define ARENA_W 12
 static void build_arena(uint16_t n)

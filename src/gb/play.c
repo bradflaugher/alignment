@@ -45,11 +45,15 @@ static uint8_t shoot_up;            /* the last shot went overhead (the firing p
 static uint8_t hit_i, hit_t;        /* the enemy that was just hit flashes */
 static uint8_t boss_boom;           /* frames of the boss's death throes left */
 static uint8_t boss_seen;           /* the fight started this life (HUD bar) */
+static uint8_t armour_told;         /* the HUD has said the boss's armour is shut (once a fight) */
+static uint8_t jump_buf, flip_buf;  /* frames a jump / flip pressed too early is remembered */
 
 /* explosions, drawn in free enemy slots */
 #define NBOOM 2
 static uint16_t boom_x[NBOOM];
 static uint8_t boom_y[NBOOM], boom_t[NBOOM], boom_next;
+
+#define INPUT_BUF 6
 
 #define POSE_IDLE 0
 #define POSE_RUN 1
@@ -88,6 +92,21 @@ static void spr16(uint8_t slot, int16_t sx, int16_t sy)
     spr16a(slot);
 }
 #define SPR(t, p) (spr_t = (t), spr_p = (p))
+
+/* the same from d_sx / d_sy (fixed addresses: cheaper for SDCC than stack arguments;
+ * the enemies are drawn through this) */
+static int16_t d_sx, d_sy;
+static void spr16d(uint8_t slot)
+{
+    if (d_sx < -15 || d_sx > 167 || d_sy < -15 || d_sy > 151) {
+        OAM_item_t *o = &shadow_OAM[slot];
+        o[0].y = o[1].y = o[2].y = o[3].y = 0;
+        return;
+    }
+    spr_x = (uint8_t)((uint8_t)d_sx + 8);
+    spr_y = (uint8_t)((uint8_t)d_sy + 16);
+    spr16a(slot);
+}
 #define FLIPS(fx, fy) ((uint8_t)(((fx) ? S_FLIPX : 0) | ((fy) ? S_FLIPY : 0)))
 
 /* a 32x32 picture: 16 sprites, tiles base + row * 4 + column, mirrored as needed (gfx.c's
@@ -186,10 +205,12 @@ static void hud_update(void)
         return;
     }
     arms = (uint8_t)(player.hull | (player.shield << 2) | (player.power << 3) | (player.bomb << 4));
+    /* (the last pip blinks: one more hit is the mech) */
+    if (player.hull == 1 && (frame & 16)) arms |= 0x80;
     if (hud_arms != arms) {
         hud_arms = arms;
         for (i = 0; i < HULL_MAX; i++) {
-            hud_t[5 + i] = i < player.hull ? UI_HULL : UI_HULL_EMPTY;
+            hud_t[5 + i] = i < player.hull && !(arms & 0x80) ? UI_HULL : UI_HULL_EMPTY;
             hud_a[5 + i] = player.hull <= 1 ? PAL_HAZARD : PAL_GREEN;
         }
         hud_t[8] = player.shield ? UI_SHIELD : TILE_BLANK;
@@ -210,7 +231,7 @@ static void hud_update(void)
     if (frame & 3) return;
     /* progress through the stage, or what is left of the boss: 4 tiles, half steps */
     b = 0;
-    t = boss_seen ? (uint8_t)(boss.hpmax - boss.hp) : (uint8_t)(mech_px() >> 4);
+    t = boss_seen ? (uint8_t)(boss.hpmax - boss.hp) : (uint8_t)(mech.x >> 8);
     while (b < 8 && t >= hud_thr[b]) b++;
     if (boss_seen) b = (uint8_t)(8 - b);
     if (b != hud_bar) {
@@ -242,11 +263,22 @@ static void hud_say(const char *s, uint8_t pal, uint8_t t)
 
 /* ------------------------------------------------------------------ camera & map */
 
+/* the mech is in the boss arena (between its doors) */
+static uint8_t in_arena(void)
+{
+    uint8_t cx;
+    if (!stage.arena.kind) return 0;
+    cx = (uint8_t)(mech.x >> 8);        /* (1/16 px: the high byte is the cell) */
+    return (uint8_t)(cx > stage.arena.x0 && cx <= stage.arena.x1);
+}
+
+static uint8_t cam_arena;           /* in_arena(), worked out once a frame (camera) */
+
 static uint16_t cam_target_x(void)
 {
     int16_t x = (int16_t)mech_px() - 72 + (mech.facing ? -12 : 12);
     int16_t maxx = (int16_t)((uint16_t)stage.w * 16 - 160);
-    if (boss.active) {
+    if (boss.active || cam_arena) {
         /* the arena is about a screen wide: hold it framed */
         int16_t lo = (int16_t)(((uint16_t)stage.arena.x0 << 4) + 8);
         int16_t hi = (int16_t)(((uint16_t)stage.arena.x1 << 4) + 24 - 160);
@@ -264,6 +296,10 @@ static uint8_t cam_target_y(void)
     /* look where gravity can take the mech: on the ground, at the side a flip would
      * fall to; in the air, where it is falling */
     int16_t y;
+    /* a boss arena is held whole, floor to ceiling (it is ARENA_ROWS cells tall, the
+     * screen 136 px): a fight is never off screen, and flipping doesn't swing the view */
+    if (cam_arena && (uint8_t)(stage.arena.bot - stage.arena.top - 1) <= ARENA_ROWS)
+        return (uint8_t)(((uint8_t)(stage.arena.bot << 4)) + 4 - 136);
     if (mech.ground) y = (int16_t)mech_py() - (mech.g ? 40 : 80);
     else y = (int16_t)mech_py() - (mech.g ? 76 : 44);
     if (y < 0) y = 0;
@@ -299,6 +335,8 @@ static void map_fill(void)
     col_hi = (uint8_t)(col_lo + 13);
     if (col_hi >= stage.w) col_hi = (uint8_t)(stage.w - 1);
     ENABLE_RAM;
+    stream_on = 0;
+    col_reset();                    /* (nothing left over from the last map) */
     stream_on = 1;
     for (c = col_lo; c <= col_hi; c++) render_column(&stage, c);
     while (col_queued()) wait_vbl_done();
@@ -319,9 +357,12 @@ static int16_t quarter(int16_t d)
 
 static void camera(uint8_t snap)
 {
-    uint16_t tx = cam_target_x();
-    uint8_t ty = cam_target_y();
+    uint16_t tx;
+    uint8_t ty;
     int16_t d;
+    cam_arena = in_arena();
+    tx = cam_target_x();
+    ty = cam_target_y();
     if (snap) {
         cam_x = tx;
         cam_y = ty;
@@ -338,8 +379,17 @@ static void camera(uint8_t snap)
         if (d < -3) d = -3;
         cam_y = (uint8_t)(cam_y + d);
     }
-    scroll_x = (uint8_t)cam_x;
-    scroll_y = cam_y;
+}
+
+/* the camera goes to the screen together with the sprites drawn for it: if a frame's
+ * work runs past VBlank (a busy DMG frame), the old background stays with the old
+ * sprites, instead of the map sliding under them for a frame */
+static void camera_show(void)
+{
+    CRITICAL {
+        scroll_x = (uint8_t)cam_x;
+        scroll_y = cam_y;
+    }
 }
 
 /* ------------------------------------------------------------------ drawing */
@@ -421,16 +471,26 @@ static void bolt_draw(uint16_t x, uint8_t y)
 
 static void draw_enemies(void)
 {
-    /* from the world step's list of enemies near the mech (positions already worked out) */
-    uint8_t j, n = 0, k, rods = 0, len, age;
-    uint8_t ey;
-    int16_t sx, sy;
-    OAM_item_t *rod = &shadow_OAM[SP_ROD];
-    const Near *q = near;
-    uint16_t cx = (uint16_t)(cam_x + shake_x);
-    uint8_t cy = (uint8_t)(cam_y + shake_y);
+    /* from the world step's list of enemies near the mech (positions already worked out).
+     * Its variables are static: SDCC reaches those directly, stack locals cost it several
+     * times as much, and this is the heaviest part of a busy DMG frame. */
+    static uint8_t j, n, k, rods, len, age, ey, cy, t, fx, fy, pal, ct, rx;
+    static int16_t ry;
+#define sx d_sx
+#define sy d_sy
+    static OAM_item_t *rod;
+    static const Near *q;
+    static const Enemy *e;
+    static uint16_t cx, mpx, tt;
+    n = 0;
+    rods = 0;
+    rod = &shadow_OAM[SP_ROD];
+    q = near;
+    cx = (uint16_t)(cam_x + shake_x);
+    cy = (uint8_t)(cam_y + shake_y);
+    mpx = mech_px();
     for (j = near_n; j && n < NUM_ESPR; j--, q++) {
-        const Enemy *e = &stage.enemy[q->i];
+        e = &stage.enemy[q->i];
         if (!e->hp) continue;
         sx = (int16_t)(q->x - cx);
         if (sx < -16 || sx > 160) continue;
@@ -438,11 +498,20 @@ static void draw_enemies(void)
         sy = (int16_t)ey - (int16_t)cy;
         len = q->len;
         if (q->kind == E_CRUSHER) {
-            /* the piston head, and its rod above it */
-            int16_t ry = (int16_t)(sy + len - 8);
-            uint8_t rx = (uint8_t)(sx + 12);
+            /* the piston head, and its rod above it; it shakes before it slams */
+            if (!len) {
+                tt = (uint16_t)(stage_t + ((uint16_t)e->phase << 2));
+                if (e->speed == 2) tt <<= 1;
+                else if (e->speed == 3) tt = (uint16_t)(tt + (tt << 1));
+                ct = (uint8_t)(tt & 127);
+                if (ct >= 44 && ct < 60) sx += (frame & 2) ? 1 : -1;
+            }
+            ry = (int16_t)(sy + len - 8);
+            rx = (uint8_t)(sx + 12);
             SPR(SPR_CRATE, (uint8_t)((SPAL_CRATE) | FLIPS(0, 0)));
-            spr16((uint8_t)(SP_ENEMY + (n << 2)), sx, (int16_t)(sy + len));
+            sy += len;
+            spr16d((uint8_t)(SP_ENEMY + (n << 2)));
+            sy -= len;
             for (k = 0; k < NUM_ROD && rods < NUM_ROD; k++, ry -= 16) {
                 if (ry < sy - 8) break;
                 if (ry < -8 || ry > 151) continue;
@@ -454,22 +523,23 @@ static void draw_enemies(void)
                 rods++;
             }
         } else {
-            uint8_t t, fx, fy, pal = SPAL_BOT | S_PALETTE;     /* (DMG: OBP1) */
+            pal = SPAL_BOT | S_PALETTE;     /* (DMG: OBP1) */
             if (q->kind == E_TURRET) {
                 age = (uint8_t)((uint8_t)(stage_t + (uint16_t)(e->phase << 2)) & 127);
-                t = age >= 8 && age < 16 ? SPR_TURRET_FIRE : SPR_TURRET;
+                /* (lit from 16 frames before the bolt leaves: the warning) */
+                t = age < 16 || age >= 120 ? SPR_TURRET_FIRE : SPR_TURRET;
                 if ((age >> 1) == 4 && sx >= 0 && sx < 160) sfx_play(SFX_TURRET);
                 fx = e->speed;
                 fy = e->y1;
             } else {
                 t = q->kind == E_HOVER ? ((frame >> 2) & 1 ? SPR_BOT_A : SPR_BOT_B)
                                        : ((frame >> 3) & 1 ? SPR_BOT_WALK : SPR_BOT_A);
-                fx = (uint8_t)(q->x > mech_px());
+                fx = (uint8_t)(q->x > mpx);
                 fy = (uint8_t)(q->kind == E_CRAWLER && e->y1);
             }
             if (hit_t && hit_i == q->i && (hit_t & 2)) pal = SPAL_WHITE;
             SPR(t, (uint8_t)((pal) | FLIPS(fx, fy)));
-            spr16((uint8_t)(SP_ENEMY + (n << 2)), sx, sy);
+            spr16d((uint8_t)(SP_ENEMY + (n << 2)));
         }
         n++;
     }
@@ -477,11 +547,15 @@ static void draw_enemies(void)
     for (k = 0; k < NBOOM && n < NUM_ESPR; k++) {
         if (!boom_t[k]) continue;
         SPR(boom_t[k] > 8 ? SPR_EXPLODE1 : SPR_EXPLODE2, (uint8_t)(((uint8_t)((frame & 2) ? SPAL_DEAD : SPAL_WHITE)) | FLIPS((uint8_t)(boom_t[k] & 4), 0)));
-        spr16((uint8_t)(SP_ENEMY + (n << 2)), (int16_t)(boom_x[k] - cx), (int16_t)boom_y[k] - (int16_t)cy);
+        sx = (int16_t)(boom_x[k] - cx);
+        sy = (int16_t)boom_y[k] - (int16_t)cy;
+        spr16d((uint8_t)(SP_ENEMY + (n << 2)));
         n++;
     }
     for (; n < NUM_ESPR; n++) hide4((uint8_t)(SP_ENEMY + (n << 2)));
     for (; rods < NUM_ROD; rods++, rod++) rod->y = 0;
+#undef sx
+#undef sy
 }
 
 static void draw_enemy_bolts(void)
@@ -513,6 +587,23 @@ static void draw_boss_bolts(void)
     for (k = bolt_n; k < NUM_BOLT; k++, bolt_o++) bolt_o->y = 0;
 }
 
+/* the boss is about to fire (it blinks: the warning) */
+static uint8_t boss_charging(void)
+{
+    uint8_t c;
+    if (!boss.active) return 0;
+    switch (boss.kind) {
+    case BK_SENTINEL:       /* (a fan of three, at st 12, 24, 36) */
+        return (uint8_t)(boss.state == 1 && boss.st < 36 && ((boss.st >= 4 && boss.st < 12) || (boss.st >= 18 && boss.st < 24) || boss.st >= 30));
+    case BK_HIVE:           /* (spores at clock 40; the second time, at 104 too) */
+        c = (uint8_t)(boss.clock & 127);
+        return (uint8_t)((c >= 26 && c < 40) || (boss.level > 1 && c >= 92 && c < 104));
+    case BK_TWIN:           /* (a shot when its count is up and the mech is level with it) */
+        return (uint8_t)(boss.state == 0 && boss.st >= (uint8_t)(boss.level > 1 ? 22 : 36));
+    }
+    return 0;
+}
+
 static void draw_boss_body(void)
 {
     uint8_t k, pal, base, fx = 0, fy = 0, rods = 0;
@@ -521,6 +612,7 @@ static void draw_boss_body(void)
     OAM_item_t *rod = &shadow_OAM[SP_ROD];
     pal = boss.flash & 2 ? SPAL_WHITE : SPAL_BOT | S_PALETTE;   /* (DMG: OBP1) */
     if (boss_boom && (frame & 2)) pal = SPAL_DEAD;
+    else if (!boss.flash && (frame & 2) && boss_charging()) pal = SPAL_DEAD;
     if (boss.dead && !boss_boom) {
         for (k = 0; k < 16; k += 4) hide4((uint8_t)(SP_ENEMY + k));
     } else if (boss.kind == BK_TWIN) {
@@ -537,6 +629,22 @@ static void draw_boss_body(void)
             break;
         case BK_PISTON:
             base = (uint8_t)(BOSS_TILE_BASE + (boss.open ? 16 : 0));
+            if (boss.state <= 1 && !(boss.state == 1 && boss.st >= PISTON_LOCK(boss.level))) {
+                /* where it will come down: a mark on the floor under it while it hunts,
+                 * blinking (and the piston shaking) once it has locked on */
+                uint8_t lock = boss.state, k2;
+                int16_t my = (int16_t)(((uint16_t)stage.arena.bot << 4) - 8 - (int16_t)cam_y - shake_y);
+                if (lock) sx += (frame & 2) ? 1 : -1;
+                if (!lock || (frame & 4)) {
+                    for (k2 = 0; k2 < 2; k2++, rod++, rods++) {
+                        rod->y = (uint8_t)(my + 16);
+                        rod->x = (uint8_t)(sx + 8 + 8 + (k2 << 3));
+                        rod->tile = SPR_RING;
+                        rod->prop = (uint8_t)((lock ? SPAL_DEAD : SPAL_CRATE) | S_FLIPY | (k2 ? S_FLIPX : 0));
+                    }
+                }
+                break;
+            }
             /* the piston's rod, up to the ceiling */
             {
                 int16_t ry = (int16_t)(sy - 8);
@@ -595,6 +703,7 @@ static void frame_end(void)
     if (hit_t) hit_t--;
     if (shoot_t < 255) shoot_t++;
     play_ly = LY_REG;
+    camera_show();
     wait_vbl_done();
     /* a frame of play must take exactly one frame */
     if (play_state == PS_PLAY) {
@@ -693,6 +802,7 @@ static void spawn(void)
     /* settle onto the floor */
     for (f = 0; f < 24; f++) mech_step(&mech, &stage, 0, stage_t);
     pose = POSE_IDLE;
+    jump_buf = flip_buf = 0;
     mech_hidden = 0;
     shoot_t = 255;
     aim_up = shoot_up = 0;
@@ -708,6 +818,7 @@ static void arena_restart(void)
     arena_reset(&stage);
     boss_boom = 0;
     boss_seen = 0;
+    armour_told = 0;
     bar_setup(stage.w);
 }
 
@@ -1090,9 +1201,45 @@ static uint8_t input_bits(void)
     if (j & J_B) in |= IN_FIRE;
     if (j & (mech.g == G_DOWN ? J_UP : J_DOWN)) in |= IN_AIM;
     if (j & J_A) in |= IN_JUMP;
-    if (n & J_A) in |= (j & (J_UP | J_DOWN)) ? IN_FLIP_NEW : IN_JUMP_NEW;
-    if (n & J_SELECT) in |= IN_FLIP_NEW;
+    /* A press that comes a few frames too early (still in the air, the air flip
+     * spent) is remembered and goes in when the mech lands: no eaten inputs */
+    if (n & J_A) {
+        /* (+ 1: the counters below tick on this frame too, and the wait is INPUT_BUF more) */
+        if (j & (J_UP | J_DOWN)) flip_buf = INPUT_BUF + 1;
+        else jump_buf = INPUT_BUF + 1;
+    }
+    if (n & J_SELECT) flip_buf = INPUT_BUF + 1;
+    if (jump_buf) {
+        jump_buf--;
+        if (!(j & J_A)) {
+            jump_buf = 0;           /* (let go: no jump) */
+        } else if (mech.ground || mech.coyote) {
+            in |= IN_JUMP_NEW;
+            jump_buf = 0;
+        }
+    }
+    if (flip_buf) {
+        /* (when the wait runs out the flip goes in anyway: it is refused, with its sound) */
+        if (mech.ground || mech.airflip || !--flip_buf) {
+            in |= IN_FLIP_NEW;
+            flip_buf = 0;
+        }
+    }
     return in;
+    }
+}
+
+/* a shot turned away by armour (a crusher, a boss that is shut): a clank and a spark
+ * thrown back, and once a fight the HUD says why nothing happened */
+static void armour_fx(void)
+{
+    uint8_t r = fx_rand();
+    sfx_play(SFX_BUMP);
+    part_spawn((uint16_t)(ev_tx + 4), (uint8_t)(ev_ty + 4), (int8_t)((r & 15) - 8), (int8_t)(((r >> 4) & 15) - 12),
+               SPR_SPARK_SMALL, SPAL_WHITE, 10);
+    if (boss.active && !armour_told) {
+        armour_told = 1;
+        hud_say("ARMOUR SHUT", PAL_HAZARD, 50);
     }
 }
 
@@ -1183,6 +1330,8 @@ uint8_t play_run(void) BANKED
             }
             if ((ev2 & EV2_BOSS_FIRE) && !(ev & EV_SHOOT)) sfx_play(SFX_TURRET);
         }
+        if (ev_armour) armour_fx();
+        if (boss.active && boss.kind == BK_PISTON && boss.state == 1 && boss.st == 1) sfx_play(SFX_HINT);
         dbg_e[2] = LY_REG;
         if (ev & (EV_CELL | EV_CHECK | EV_ITEM)) {
             if (ev & EV_CELL) cell_fx();
@@ -1223,8 +1372,12 @@ uint8_t play_run(void) BANKED
             pose = POSE_IDLE;
         }
         /* laser gates blink */
-        if (laser_on(stage_t) != laser_was) {
-            laser_was = laser_on(stage_t);
+        /* (shown lit 8 frames before they burn: the art takes a few VBlanks to reach the
+         * screen, and a gate must never kill before it is seen) */
+        in = (uint8_t)((uint8_t)(stage_t >> 3) & 15);
+        in = (uint8_t)(in < 9 || in == 15);
+        if (in != laser_was) {
+            laser_was = in;
             gfx_laser(laser_was);
         }
         dbg_ly[2] = LY_REG;
