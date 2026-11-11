@@ -326,6 +326,83 @@ class Video(unittest.TestCase):
         self.assertEqual(g.win_text(8, 7, 1), '/')
 
 
+class Rules(unittest.TestCase):
+    """Losing, coming back, running out of mechs, finishing the campaign."""
+
+    @both
+    def test_lost_in_a_boss_fight(self, cgb):
+        """a mech lost in the arena comes back outside its door: the door is open
+        again, the boss is whole and waiting, and the fight starts over on entering"""
+        g = Game(cgb)
+        g.run(150)
+        load_demo(g, bot_path('s', 2))
+        self.assertTrue(g.start_sector(2))
+        self.assertTrue(g.wait(lambda: g.boss()['active'], 30000))
+        kind, x0, x1, top, bot = g.arena()
+        self.assertTrue(g.wait(lambda: g.boss()['hp'] < g.boss()['hpmax'], 3000), 'the bot never hurt the piston')
+        g.poke('demo_on', 0, [0])           # hands off: the piston comes down on the mech
+        deaths = g.u16('run', RUN_DEATHS)
+        self.assertTrue(g.wait(lambda: g.u16('run', RUN_DEATHS) == deaths + 1, 3000), 'the piston never got the mech')
+        self.assertTrue(g.wait(lambda: g.u8('play_state') == PS_PLAY, 600))
+        b = g.boss()
+        self.assertEqual((b['active'], b['dead'], b['hp']), (0, 0, b['hpmax']))
+        x, y, grav, ground, _, dead = g.mech()
+        self.assertEqual((x >> 4, grav, dead), (x0 - 1, 0, 0))
+        self.assertEqual(g.u8('stage', x0 * 16 + bot - 1), 15, 'the entry door is not open')    # T_DOOR_OPEN
+        self.assertEqual(g.hull(), 3)
+        watch = VramWatch(g)
+        g.keys(['right'])
+        self.assertTrue(g.wait(lambda: g.boss()['active'], 300), 'the fight did not start again')
+        self.assertEqual(g.u8('stage', x0 * 16 + bot - 1), 14, 'the door did not seal')         # T_DOOR
+        for _ in range(60):
+            g.run(1)
+            if g.u8('play_state') == PS_PLAY:
+                watch.look()
+        g.keys([])
+        self.assertEqual(watch.bad, [])
+        self.assertEqual(g.u8('vbl_late'), 0)
+
+    def test_game_over_and_continue(self):
+        """the last mech lost: GAME OVER, A continues the same sector with three mechs
+        and half the score"""
+        g = Game(True)
+        g.run(150)
+        self.assertTrue(g.start_sector(3))
+        g.poke('run', RUN_LIVES, [1])
+        g.poke('run', 6, [0x10, 0x27, 0, 0])            # score 10000
+        g.keys(['right'])                               # into the first hazard, however long it takes
+        self.assertTrue(g.wait(lambda: g.bkg_text(5, 2, 9) == 'GAME OVER', 6000), 'no game over')
+        g.keys([])
+        g.run(90)
+        self.assertEqual(g.bkg_text(3, 15, 10), 'A CONTINUE')
+        g.press('a', 3, 3)
+        self.assertTrue(g.wait(lambda: g.u8('play_state') == PS_CARD, 600))
+        self.assertTrue(g.wait(lambda: g.u8('play_state') == PS_PLAY, 3000))
+        self.assertEqual(g.u16('run', RUN_STAGE), 3)
+        self.assertEqual(g.u8('run', RUN_LIVES), 3)
+        self.assertEqual(g.u16('run', 6), 5000)
+
+    def test_campaign_ends(self):
+        """the last sector cleared: the ending, the save says so, ENDLESS is open"""
+        g = Game(True)
+        g.run(150)
+        load_demo(g, bot_path('s', 8))
+        self.assertTrue(g.start_sector(8))
+        self.assertTrue(g.wait(lambda: g.u8('play_state') == PS_CLEAR, 30000))
+        self.assertTrue(g.wait(lambda: g.bkg_text(1, 9, 18) == 'ALIGNMENT RESTORED', 1200), 'no ending')
+        self.assertEqual(g.u8('save', 10), 1, 'campaign_done not saved')
+        self.assertEqual(g.pb.memory[0, 0xA000 + 10], 1, 'campaign_done not on the cartridge')
+        # A leaves the ending whenever it is pressed (it used to count only in 15
+        # frames of every 256)
+        g.run(300)
+        g.press('a', 3, 3)
+        self.assertTrue(g.wait(lambda: g.bkg_text(2, 8, 16) == 'GRAVITY  STATION', 200), 'A did not leave the ending')
+        g.run(60)
+        g.press('start', 3, 20)
+        self.assertEqual(g.bkg_text(3, 12, 7), 'ENDLESS')
+        self.assertEqual(g.bkg_text(3, 13, 10), 'ENTER SEED')
+
+
 class Feel(unittest.TestCase):
     """Controls and feedback."""
 
