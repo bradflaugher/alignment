@@ -92,6 +92,21 @@ static void spr16(uint8_t slot, int16_t sx, int16_t sy)
     spr16a(slot);
 }
 #define SPR(t, p) (spr_t = (t), spr_p = (p))
+
+/* the same from d_sx / d_sy (fixed addresses: cheaper for SDCC than stack arguments;
+ * the enemies are drawn through this) */
+static int16_t d_sx, d_sy;
+static void spr16d(uint8_t slot)
+{
+    if (d_sx < -15 || d_sx > 167 || d_sy < -15 || d_sy > 151) {
+        OAM_item_t *o = &shadow_OAM[slot];
+        o[0].y = o[1].y = o[2].y = o[3].y = 0;
+        return;
+    }
+    spr_x = (uint8_t)((uint8_t)d_sx + 8);
+    spr_y = (uint8_t)((uint8_t)d_sy + 16);
+    spr16a(slot);
+}
 #define FLIPS(fx, fy) ((uint8_t)(((fx) ? S_FLIPX : 0) | ((fy) ? S_FLIPY : 0)))
 
 /* a 32x32 picture: 16 sprites, tiles base + row * 4 + column, mirrored as needed (gfx.c's
@@ -216,7 +231,7 @@ static void hud_update(void)
     if (frame & 3) return;
     /* progress through the stage, or what is left of the boss: 4 tiles, half steps */
     b = 0;
-    t = boss_seen ? (uint8_t)(boss.hpmax - boss.hp) : (uint8_t)(mech_px() >> 4);
+    t = boss_seen ? (uint8_t)(boss.hpmax - boss.hp) : (uint8_t)(mech.x >> 8);
     while (b < 8 && t >= hud_thr[b]) b++;
     if (boss_seen) b = (uint8_t)(8 - b);
     if (b != hud_bar) {
@@ -253,15 +268,17 @@ static uint8_t in_arena(void)
 {
     uint8_t cx;
     if (!stage.arena.kind) return 0;
-    cx = (uint8_t)(mech_px() >> 4);
+    cx = (uint8_t)(mech.x >> 8);        /* (1/16 px: the high byte is the cell) */
     return (uint8_t)(cx > stage.arena.x0 && cx <= stage.arena.x1);
 }
+
+static uint8_t cam_arena;           /* in_arena(), worked out once a frame (camera) */
 
 static uint16_t cam_target_x(void)
 {
     int16_t x = (int16_t)mech_px() - 72 + (mech.facing ? -12 : 12);
     int16_t maxx = (int16_t)((uint16_t)stage.w * 16 - 160);
-    if (boss.active || in_arena()) {
+    if (boss.active || cam_arena) {
         /* the arena is about a screen wide: hold it framed */
         int16_t lo = (int16_t)(((uint16_t)stage.arena.x0 << 4) + 8);
         int16_t hi = (int16_t)(((uint16_t)stage.arena.x1 << 4) + 24 - 160);
@@ -281,7 +298,7 @@ static uint8_t cam_target_y(void)
     int16_t y;
     /* a boss arena is held whole, floor to ceiling (it is ARENA_ROWS cells tall, the
      * screen 136 px): a fight is never off screen, and flipping doesn't swing the view */
-    if (in_arena() && (uint8_t)(stage.arena.bot - stage.arena.top - 1) <= ARENA_ROWS)
+    if (cam_arena && (uint8_t)(stage.arena.bot - stage.arena.top - 1) <= ARENA_ROWS)
         return (uint8_t)(((uint8_t)(stage.arena.bot << 4)) + 4 - 136);
     if (mech.ground) y = (int16_t)mech_py() - (mech.g ? 40 : 80);
     else y = (int16_t)mech_py() - (mech.g ? 76 : 44);
@@ -340,9 +357,12 @@ static int16_t quarter(int16_t d)
 
 static void camera(uint8_t snap)
 {
-    uint16_t tx = cam_target_x();
-    uint8_t ty = cam_target_y();
+    uint16_t tx;
+    uint8_t ty;
     int16_t d;
+    cam_arena = in_arena();
+    tx = cam_target_x();
+    ty = cam_target_y();
     if (snap) {
         cam_x = tx;
         cam_y = ty;
@@ -451,16 +471,26 @@ static void bolt_draw(uint16_t x, uint8_t y)
 
 static void draw_enemies(void)
 {
-    /* from the world step's list of enemies near the mech (positions already worked out) */
-    uint8_t j, n = 0, k, rods = 0, len, age;
-    uint8_t ey;
-    int16_t sx, sy;
-    OAM_item_t *rod = &shadow_OAM[SP_ROD];
-    const Near *q = near;
-    uint16_t cx = (uint16_t)(cam_x + shake_x);
-    uint8_t cy = (uint8_t)(cam_y + shake_y);
+    /* from the world step's list of enemies near the mech (positions already worked out).
+     * Its variables are static: SDCC reaches those directly, stack locals cost it several
+     * times as much, and this is the heaviest part of a busy DMG frame. */
+    static uint8_t j, n, k, rods, len, age, ey, cy, t, fx, fy, pal, ct, rx;
+    static int16_t ry;
+#define sx d_sx
+#define sy d_sy
+    static OAM_item_t *rod;
+    static const Near *q;
+    static const Enemy *e;
+    static uint16_t cx, mpx, tt;
+    n = 0;
+    rods = 0;
+    rod = &shadow_OAM[SP_ROD];
+    q = near;
+    cx = (uint16_t)(cam_x + shake_x);
+    cy = (uint8_t)(cam_y + shake_y);
+    mpx = mech_px();
     for (j = near_n; j && n < NUM_ESPR; j--, q++) {
-        const Enemy *e = &stage.enemy[q->i];
+        e = &stage.enemy[q->i];
         if (!e->hp) continue;
         sx = (int16_t)(q->x - cx);
         if (sx < -16 || sx > 160) continue;
@@ -470,17 +500,18 @@ static void draw_enemies(void)
         if (q->kind == E_CRUSHER) {
             /* the piston head, and its rod above it; it shakes before it slams */
             if (!len) {
-                uint16_t tt = (uint16_t)(stage_t + ((uint16_t)e->phase << 2));
-                uint8_t ct;
+                tt = (uint16_t)(stage_t + ((uint16_t)e->phase << 2));
                 if (e->speed == 2) tt <<= 1;
                 else if (e->speed == 3) tt = (uint16_t)(tt + (tt << 1));
                 ct = (uint8_t)(tt & 127);
                 if (ct >= 44 && ct < 60) sx += (frame & 2) ? 1 : -1;
             }
-            int16_t ry = (int16_t)(sy + len - 8);
-            uint8_t rx = (uint8_t)(sx + 12);
+            ry = (int16_t)(sy + len - 8);
+            rx = (uint8_t)(sx + 12);
             SPR(SPR_CRATE, (uint8_t)((SPAL_CRATE) | FLIPS(0, 0)));
-            spr16((uint8_t)(SP_ENEMY + (n << 2)), sx, (int16_t)(sy + len));
+            sy += len;
+            spr16d((uint8_t)(SP_ENEMY + (n << 2)));
+            sy -= len;
             for (k = 0; k < NUM_ROD && rods < NUM_ROD; k++, ry -= 16) {
                 if (ry < sy - 8) break;
                 if (ry < -8 || ry > 151) continue;
@@ -492,7 +523,7 @@ static void draw_enemies(void)
                 rods++;
             }
         } else {
-            uint8_t t, fx, fy, pal = SPAL_BOT | S_PALETTE;     /* (DMG: OBP1) */
+            pal = SPAL_BOT | S_PALETTE;     /* (DMG: OBP1) */
             if (q->kind == E_TURRET) {
                 age = (uint8_t)((uint8_t)(stage_t + (uint16_t)(e->phase << 2)) & 127);
                 /* (lit from 16 frames before the bolt leaves: the warning) */
@@ -503,12 +534,12 @@ static void draw_enemies(void)
             } else {
                 t = q->kind == E_HOVER ? ((frame >> 2) & 1 ? SPR_BOT_A : SPR_BOT_B)
                                        : ((frame >> 3) & 1 ? SPR_BOT_WALK : SPR_BOT_A);
-                fx = (uint8_t)(q->x > mech_px());
+                fx = (uint8_t)(q->x > mpx);
                 fy = (uint8_t)(q->kind == E_CRAWLER && e->y1);
             }
             if (hit_t && hit_i == q->i && (hit_t & 2)) pal = SPAL_WHITE;
             SPR(t, (uint8_t)((pal) | FLIPS(fx, fy)));
-            spr16((uint8_t)(SP_ENEMY + (n << 2)), sx, sy);
+            spr16d((uint8_t)(SP_ENEMY + (n << 2)));
         }
         n++;
     }
@@ -516,11 +547,15 @@ static void draw_enemies(void)
     for (k = 0; k < NBOOM && n < NUM_ESPR; k++) {
         if (!boom_t[k]) continue;
         SPR(boom_t[k] > 8 ? SPR_EXPLODE1 : SPR_EXPLODE2, (uint8_t)(((uint8_t)((frame & 2) ? SPAL_DEAD : SPAL_WHITE)) | FLIPS((uint8_t)(boom_t[k] & 4), 0)));
-        spr16((uint8_t)(SP_ENEMY + (n << 2)), (int16_t)(boom_x[k] - cx), (int16_t)boom_y[k] - (int16_t)cy);
+        sx = (int16_t)(boom_x[k] - cx);
+        sy = (int16_t)boom_y[k] - (int16_t)cy;
+        spr16d((uint8_t)(SP_ENEMY + (n << 2)));
         n++;
     }
     for (; n < NUM_ESPR; n++) hide4((uint8_t)(SP_ENEMY + (n << 2)));
     for (; rods < NUM_ROD; rods++, rod++) rod->y = 0;
+#undef sx
+#undef sy
 }
 
 static void draw_enemy_bolts(void)
