@@ -298,11 +298,27 @@ uint8_t fx_rand(void)
     return (uint8_t)(rnd_s + frame);
 }
 
+/* A + B + SELECT + START held together: back to the title, as on every cartridge
+ * (there is no reset button on a Game Boy, and a flash cart's menu is a power cycle
+ * away). The save is only ever written in one piece elsewhere, so nothing is lost. */
+#define RESET_KEYS (J_A | J_B | J_SELECT | J_START)
+
+static void soft_reset(void)
+{
+    stream_on = 0;
+    DISABLE_RAM;
+    music_stop();
+    fade_to(4);
+    while (joypad()) wait_vbl_done();
+    reset();
+}
+
 void input_poll(void)
 {
     joy_prev = joy;
     joy = joypad();
     joy_new = (uint8_t)(joy & ~joy_prev);
+    if ((joy & RESET_KEYS) == RESET_KEYS) soft_reset();
 }
 
 void wait_frames(uint8_t n)

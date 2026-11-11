@@ -46,11 +46,14 @@ static uint8_t hit_i, hit_t;        /* the enemy that was just hit flashes */
 static uint8_t boss_boom;           /* frames of the boss's death throes left */
 static uint8_t boss_seen;           /* the fight started this life (HUD bar) */
 static uint8_t armour_told;         /* the HUD has said the boss's armour is shut (once a fight) */
+static uint8_t jump_buf, flip_buf;  /* frames a jump / flip pressed too early is remembered */
 
 /* explosions, drawn in free enemy slots */
 #define NBOOM 2
 static uint16_t boom_x[NBOOM];
 static uint8_t boom_y[NBOOM], boom_t[NBOOM], boom_next;
+
+#define INPUT_BUF 6
 
 #define POSE_IDLE 0
 #define POSE_RUN 1
@@ -187,10 +190,12 @@ static void hud_update(void)
         return;
     }
     arms = (uint8_t)(player.hull | (player.shield << 2) | (player.power << 3) | (player.bomb << 4));
+    /* (the last pip blinks: one more hit is the mech) */
+    if (player.hull == 1 && (frame & 16)) arms |= 0x80;
     if (hud_arms != arms) {
         hud_arms = arms;
         for (i = 0; i < HULL_MAX; i++) {
-            hud_t[5 + i] = i < player.hull ? UI_HULL : UI_HULL_EMPTY;
+            hud_t[5 + i] = i < player.hull && !(arms & 0x80) ? UI_HULL : UI_HULL_EMPTY;
             hud_a[5 + i] = player.hull <= 1 ? PAL_HAZARD : PAL_GREEN;
         }
         hud_t[8] = player.shield ? UI_SHIELD : TILE_BLANK;
@@ -735,6 +740,7 @@ static void spawn(void)
     /* settle onto the floor */
     for (f = 0; f < 24; f++) mech_step(&mech, &stage, 0, stage_t);
     pose = POSE_IDLE;
+    jump_buf = flip_buf = 0;
     mech_hidden = 0;
     shoot_t = 255;
     aim_up = shoot_up = 0;
@@ -1133,8 +1139,29 @@ static uint8_t input_bits(void)
     if (j & J_B) in |= IN_FIRE;
     if (j & (mech.g == G_DOWN ? J_UP : J_DOWN)) in |= IN_AIM;
     if (j & J_A) in |= IN_JUMP;
-    if (n & J_A) in |= (j & (J_UP | J_DOWN)) ? IN_FLIP_NEW : IN_JUMP_NEW;
-    if (n & J_SELECT) in |= IN_FLIP_NEW;
+    /* A press that comes a few frames too early (still in the air, the air flip
+     * spent) is remembered and goes in when the mech lands: no eaten inputs */
+    if (n & J_A) {
+        if (j & (J_UP | J_DOWN)) flip_buf = INPUT_BUF;
+        else jump_buf = INPUT_BUF;
+    }
+    if (n & J_SELECT) flip_buf = INPUT_BUF;
+    if (jump_buf) {
+        jump_buf--;
+        if (!(j & J_A)) {
+            jump_buf = 0;           /* (let go: no jump) */
+        } else if (mech.ground || mech.coyote) {
+            in |= IN_JUMP_NEW;
+            jump_buf = 0;
+        }
+    }
+    if (flip_buf) {
+        /* (when the wait runs out the flip goes in anyway: it is refused, with its sound) */
+        if (mech.ground || mech.airflip || !--flip_buf) {
+            in |= IN_FLIP_NEW;
+            flip_buf = 0;
+        }
+    }
     return in;
     }
 }
