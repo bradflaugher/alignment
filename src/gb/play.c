@@ -45,6 +45,7 @@ static uint8_t shoot_up;            /* the last shot went overhead (the firing p
 static uint8_t hit_i, hit_t;        /* the enemy that was just hit flashes */
 static uint8_t boss_boom;           /* frames of the boss's death throes left */
 static uint8_t boss_seen;           /* the fight started this life (HUD bar) */
+static uint8_t armour_told;         /* the HUD has said the boss's armour is shut (once a fight) */
 
 /* explosions, drawn in free enemy slots */
 #define NBOOM 2
@@ -242,11 +243,20 @@ static void hud_say(const char *s, uint8_t pal, uint8_t t)
 
 /* ------------------------------------------------------------------ camera & map */
 
+/* the mech is in the boss arena (between its doors) */
+static uint8_t in_arena(void)
+{
+    uint8_t cx;
+    if (!stage.arena.kind) return 0;
+    cx = (uint8_t)(mech_px() >> 4);
+    return (uint8_t)(cx > stage.arena.x0 && cx <= stage.arena.x1);
+}
+
 static uint16_t cam_target_x(void)
 {
     int16_t x = (int16_t)mech_px() - 72 + (mech.facing ? -12 : 12);
     int16_t maxx = (int16_t)((uint16_t)stage.w * 16 - 160);
-    if (boss.active) {
+    if (boss.active || in_arena()) {
         /* the arena is about a screen wide: hold it framed */
         int16_t lo = (int16_t)(((uint16_t)stage.arena.x0 << 4) + 8);
         int16_t hi = (int16_t)(((uint16_t)stage.arena.x1 << 4) + 24 - 160);
@@ -264,6 +274,10 @@ static uint8_t cam_target_y(void)
     /* look where gravity can take the mech: on the ground, at the side a flip would
      * fall to; in the air, where it is falling */
     int16_t y;
+    /* a boss arena is held whole, floor to ceiling (it is ARENA_ROWS cells tall, the
+     * screen 136 px): a fight is never off screen, and flipping doesn't swing the view */
+    if (in_arena() && (uint8_t)(stage.arena.bot - stage.arena.top - 1) <= ARENA_ROWS)
+        return (uint8_t)(((uint8_t)(stage.arena.bot << 4)) + 4 - 136);
     if (mech.ground) y = (int16_t)mech_py() - (mech.g ? 40 : 80);
     else y = (int16_t)mech_py() - (mech.g ? 76 : 44);
     if (y < 0) y = 0;
@@ -548,6 +562,22 @@ static void draw_boss_body(void)
             break;
         case BK_PISTON:
             base = (uint8_t)(BOSS_TILE_BASE + (boss.open ? 16 : 0));
+            if (boss.state <= 1 && !(boss.state == 1 && boss.st >= PISTON_LOCK(boss.level))) {
+                /* where it will come down: a mark on the floor under it while it hunts,
+                 * blinking (and the piston shaking) once it has locked on */
+                uint8_t lock = boss.state, k2;
+                int16_t my = (int16_t)(((uint16_t)stage.arena.bot << 4) - 8 - (int16_t)cam_y - shake_y);
+                if (lock) sx += (frame & 2) ? 1 : -1;
+                if (!lock || (frame & 4)) {
+                    for (k2 = 0; k2 < 2; k2++, rod++, rods++) {
+                        rod->y = (uint8_t)(my + 16);
+                        rod->x = (uint8_t)(sx + 8 + 8 + (k2 << 3));
+                        rod->tile = SPR_RING;
+                        rod->prop = (uint8_t)((lock ? SPAL_DEAD : SPAL_CRATE) | S_FLIPY | (k2 ? S_FLIPX : 0));
+                    }
+                }
+                break;
+            }
             /* the piston's rod, up to the ceiling */
             {
                 int16_t ry = (int16_t)(sy - 8);
@@ -720,6 +750,7 @@ static void arena_restart(void)
     arena_reset(&stage);
     boss_boom = 0;
     boss_seen = 0;
+    armour_told = 0;
     bar_setup(stage.w);
 }
 
@@ -1108,6 +1139,20 @@ static uint8_t input_bits(void)
     }
 }
 
+/* a shot turned away by armour (a crusher, a boss that is shut): a clank and a spark
+ * thrown back, and once a fight the HUD says why nothing happened */
+static void armour_fx(void)
+{
+    uint8_t r = fx_rand();
+    sfx_play(SFX_BUMP);
+    part_spawn((uint16_t)(ev_tx + 4), (uint8_t)(ev_ty + 4), (int8_t)((r & 15) - 8), (int8_t)(((r >> 4) & 15) - 12),
+               SPR_SPARK_SMALL, SPAL_WHITE, 10);
+    if (boss.active && !armour_told) {
+        armour_told = 1;
+        hud_say("ARMOUR SHUT", PAL_HAZARD, 50);
+    }
+}
+
 static void kill_fx(uint8_t stomp)
 {
     boom(ev_kx, ev_ky);
@@ -1195,6 +1240,8 @@ uint8_t play_run(void) BANKED
             }
             if ((ev2 & EV2_BOSS_FIRE) && !(ev & EV_SHOOT)) sfx_play(SFX_TURRET);
         }
+        if (ev_armour) armour_fx();
+        if (boss.active && boss.kind == BK_PISTON && boss.state == 1 && boss.st == 1) sfx_play(SFX_HINT);
         dbg_e[2] = LY_REG;
         if (ev & (EV_CELL | EV_CHECK | EV_ITEM)) {
             if (ev & EV_CELL) cell_fx();

@@ -71,7 +71,10 @@ typedef struct {
     uint8_t hp;         /* armour left; 0 = destroyed */
 } Enemy;
 
-/* boss arenas: a closed room at the end of a stage */
+/* boss arenas: a closed room at the end of a stage. It is ARENA_ROWS cells tall inside
+ * (128 px of the screen's 136), so the camera can hold all of it: nothing in a fight
+ * happens off screen. */
+#define ARENA_ROWS 8
 enum { BOSS_NONE = 0, BK_SENTINEL, BK_PISTON, BK_HIVE, BK_TWIN, NUM_BK };
 typedef struct {
     uint8_t kind;       /* BK_*, or BOSS_NONE: no arena */

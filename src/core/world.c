@@ -24,6 +24,9 @@ uint8_t dbg_w[6];
 #endif
 uint16_t ev_kx;
 uint8_t ev_ky;
+uint8_t ev_armour;
+uint16_t ev_tx;
+uint8_t ev_ty;
 
 static Stage *S;
 static Player *P;
@@ -215,6 +218,7 @@ static void boss_damage(uint8_t dmg)
 {
     if (!B->open) {
         ev2 |= EV2_TINK;
+        ev_armour = 1;
         return;
     }
     B->flash = 8;
@@ -328,7 +332,11 @@ static void piston(uint16_t mcx)
             }
         }
         break;
-    case 1: /* slam */
+    case 1: /* locked on: it hangs still a moment (the warning), then slams */
+        if (B->st < PISTON_LOCK(B->level)) {
+            B->st++;
+            break;
+        }
         if (B->vy < 8) B->vy++;
         if (B->y + 32 + B->vy >= aB) {
             B->y = (uint8_t)(aB - 32);
@@ -493,7 +501,7 @@ static uint16_t boss_frame(void)
     bh = bbh;
     if (!P->m.dead && mx < (uint16_t)(bx + bw) && bx < (uint16_t)(mx + MW) && my < (uint8_t)(by + bh) &&
         by < (uint8_t)(my + MH)) {
-        if (B->kind == BK_PISTON && B->state == 1) {
+        if (B->kind == BK_PISTON && B->state == 1 && B->st >= PISTON_LOCK(B->level)) {
             P->m.dead = DIE_CRUSHER;
         } else if ((B->kind == BK_SENTINEL || B->kind == BK_TWIN) && ALONG(P->m.vy) >= 16 &&
                    (gd > 0 ? (uint8_t)(my + MH) <= (uint8_t)(by + 8) : my + 8 >= (uint8_t)(by + bh))) {
@@ -813,13 +821,15 @@ static uint16_t vshot(Shot *s, uint8_t look)
         if (!HITS_NEAR(q, sx, sy, 2, 6)) continue;
         if (!S->enemy[q->i].hp) continue;
         s->life = 0;
-        if (q->kind == E_CRUSHER) ev2 |= EV2_TINK;
+        if (q->kind == E_CRUSHER) { ev2 |= EV2_TINK; ev_armour = 1; ev_tx = s->x; ev_ty = s->y; }
         else ev |= damage_enemy(q, P->power ? 2 : 1);
         return ev;
     }
     if (B->active && sx < (uint16_t)(bbx + bbw) && bbx < (uint16_t)(sx + 2) &&
         sy < (uint8_t)(bby + bbh) && bby < (uint8_t)(sy + 6)) {
         s->life = 0;
+        ev_tx = s->x;
+        ev_ty = s->y;
         boss_damage(P->power ? 2 : 1);
     }
     return ev;
@@ -859,13 +869,15 @@ static uint16_t shots(uint16_t clk)
             if (!HITS_NEAR(q, sx, sy, 6, 2)) continue;
             if (!S->enemy[q->i].hp) continue;
             s->life = 0;
-            if (q->kind == E_CRUSHER) ev2 |= EV2_TINK;
+            if (q->kind == E_CRUSHER) { ev2 |= EV2_TINK; ev_armour = 1; ev_tx = s->x; ev_ty = s->y; }
             else ev |= damage_enemy(q, P->power ? 2 : 1);
             break;
         }
         if (s->life && B->active && sx < (uint16_t)(bbx + bbw) && bbx < (uint16_t)(sx + 6) &&
             sy < (uint8_t)(bby + bbh) && bby < (uint8_t)(sy + 2)) {
             s->life = 0;
+            ev_tx = s->x;
+            ev_ty = s->y;
             boss_damage(P->power ? 2 : 1);
         }
     }
@@ -948,6 +960,7 @@ uint16_t world_step(Player *p, Stage *st, Boss *b, uint8_t in, uint16_t t) CORE_
     P = p;
     B = b;
     ev2 = 0;
+    ev_armour = 0;
     MARK(0);
     ev = mech_step(m, st, in, t);
     MARK(1);
