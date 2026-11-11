@@ -501,7 +501,8 @@ static uint16_t boss_frame(void)
     bh = bbh;
     if (!P->m.dead && mx < (uint16_t)(bx + bw) && bx < (uint16_t)(mx + MW) && my < (uint8_t)(by + bh) &&
         by < (uint8_t)(my + MH)) {
-        if (B->kind == BK_PISTON && B->state == 1 && B->st >= PISTON_LOCK(B->level)) {
+        /* (only once it is coming down: the whole lock-on warning is harmless to touch) */
+        if (B->kind == BK_PISTON && B->state == 1 && B->vy > 0) {
             P->m.dead = DIE_CRUSHER;
         } else if ((B->kind == BK_SENTINEL || B->kind == BK_TWIN) && ALONG(P->m.vy) >= 16 &&
                    (gd > 0 ? (uint8_t)(my + MH) <= (uint8_t)(by + 8) : my + 8 >= (uint8_t)(by + bh))) {

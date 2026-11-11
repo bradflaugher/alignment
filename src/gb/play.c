@@ -1204,10 +1204,11 @@ static uint8_t input_bits(void)
     /* A press that comes a few frames too early (still in the air, the air flip
      * spent) is remembered and goes in when the mech lands: no eaten inputs */
     if (n & J_A) {
-        if (j & (J_UP | J_DOWN)) flip_buf = INPUT_BUF;
-        else jump_buf = INPUT_BUF;
+        /* (+ 1: the counters below tick on this frame too, and the wait is INPUT_BUF more) */
+        if (j & (J_UP | J_DOWN)) flip_buf = INPUT_BUF + 1;
+        else jump_buf = INPUT_BUF + 1;
     }
-    if (n & J_SELECT) flip_buf = INPUT_BUF;
+    if (n & J_SELECT) flip_buf = INPUT_BUF + 1;
     if (jump_buf) {
         jump_buf--;
         if (!(j & J_A)) {

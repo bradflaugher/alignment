@@ -55,8 +55,9 @@ touch down.
 | 7 | Gravity Vault | phase-block puzzles | The Hive, angrier |
 | 8 | Station Core | everything at once | Mirror Mech, the final fight |
 
-A boss arena is one screen: the camera holds the whole room, so nothing in a fight
-happens out of sight. Everything that can hurt you warns first: a laser gate lights up
+A boss arena is one screen tall: the camera holds the room from floor to ceiling, so
+nothing in a fight comes from above or below the screen. (The rooms are a little wider
+than the screen, 192 px against 160, and the camera pans with the mech.) Everything that can hurt you warns first: a laser gate lights up
 before it burns, a turret's muzzle glows before it fires, a crusher shakes before it
 slams, a boss blinks before it shoots, and the Piston locks on (it hangs still and
 shakes over a blinking mark on the floor) before it comes down. Shots that hit closed

@@ -45,7 +45,7 @@ sector is a text map: `assets/levels/sectorNN.txt` (format: the docstring at the
 * **Never more than 4 enemies inside any 10-column window** (the screen draws 4).
 * The arena: a closed room, entry door `d` column reaching the arena floor, exit door `D`
   column, ceiling row and floor row solid across, at least 8 (best 12) columns inside, **at
-  most 8 rows inside** (the camera holds the whole room on screen during the fight: 8
+  most 8 rows inside** (the camera holds the room's full height on screen during the fight; it still pans sideways in a room wider than 10 columns: 8
   cells are 128 of the screen's 136 px), no enemies inside. The cell left of the entry door on the floor row is the respawn spot
   (empty, floor below). Boss start `B`: SENTINEL / TWIN on the floor at the right
   (`B` = (exit door x - 3, floor row - 2)); PISTON hanging at the ceiling in the middle
