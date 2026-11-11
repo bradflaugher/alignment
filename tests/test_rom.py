@@ -55,6 +55,12 @@ class Play(unittest.TestCase):
         watch = VramWatch(g)
         kind, x0, x1, top, bot = g.arena()
         fight, hung, slams = 0, 0, 0
+        # the sprite art (copied while the LCD is on): the common tiles, and this boss's
+        n = asset_define('NUM_SPR_TILES') * 16
+        self.assertEqual(bytes(g.pb.memory[0, 0x8000:0x8000 + n]), rom_data('spr_tiles', n), 'sprite tiles on %s' % name)
+        if 1 <= kind <= 3:
+            self.assertEqual(bytes(g.pb.memory[0, 0x8600:0x8800]), rom_data('boss_tiles', kind * 512)[-512:],
+                             'boss tiles on %s' % name)
         for _ in range(30000):
             if g.u8('play_state') != PS_PLAY:
                 break
