@@ -468,7 +468,15 @@ static void draw_enemies(void)
         sy = (int16_t)ey - (int16_t)cy;
         len = q->len;
         if (q->kind == E_CRUSHER) {
-            /* the piston head, and its rod above it */
+            /* the piston head, and its rod above it; it shakes before it slams */
+            if (!len) {
+                uint16_t tt = (uint16_t)(stage_t + ((uint16_t)e->phase << 2));
+                uint8_t ct;
+                if (e->speed == 2) tt <<= 1;
+                else if (e->speed == 3) tt = (uint16_t)(tt + (tt << 1));
+                ct = (uint8_t)(tt & 127);
+                if (ct >= 44 && ct < 60) sx += (frame & 2) ? 1 : -1;
+            }
             int16_t ry = (int16_t)(sy + len - 8);
             uint8_t rx = (uint8_t)(sx + 12);
             SPR(SPR_CRATE, (uint8_t)((SPAL_CRATE) | FLIPS(0, 0)));
@@ -487,7 +495,8 @@ static void draw_enemies(void)
             uint8_t t, fx, fy, pal = SPAL_BOT | S_PALETTE;     /* (DMG: OBP1) */
             if (q->kind == E_TURRET) {
                 age = (uint8_t)((uint8_t)(stage_t + (uint16_t)(e->phase << 2)) & 127);
-                t = age >= 8 && age < 16 ? SPR_TURRET_FIRE : SPR_TURRET;
+                /* (lit from 16 frames before the bolt leaves: the warning) */
+                t = age < 16 || age >= 120 ? SPR_TURRET_FIRE : SPR_TURRET;
                 if ((age >> 1) == 4 && sx >= 0 && sx < 160) sfx_play(SFX_TURRET);
                 fx = e->speed;
                 fy = e->y1;
@@ -543,6 +552,23 @@ static void draw_boss_bolts(void)
     for (k = bolt_n; k < NUM_BOLT; k++, bolt_o++) bolt_o->y = 0;
 }
 
+/* the boss is about to fire (it blinks: the warning) */
+static uint8_t boss_charging(void)
+{
+    uint8_t c;
+    if (!boss.active) return 0;
+    switch (boss.kind) {
+    case BK_SENTINEL:       /* (a fan of three, at st 12, 24, 36) */
+        return (uint8_t)(boss.state == 1 && boss.st < 36 && ((boss.st >= 4 && boss.st < 12) || (boss.st >= 18 && boss.st < 24) || boss.st >= 30));
+    case BK_HIVE:           /* (spores at clock 40; the second time, at 104 too) */
+        c = (uint8_t)(boss.clock & 127);
+        return (uint8_t)((c >= 26 && c < 40) || (boss.level > 1 && c >= 92 && c < 104));
+    case BK_TWIN:           /* (a shot when its count is up and the mech is level with it) */
+        return (uint8_t)(boss.state == 0 && boss.st >= (uint8_t)(boss.level > 1 ? 22 : 36));
+    }
+    return 0;
+}
+
 static void draw_boss_body(void)
 {
     uint8_t k, pal, base, fx = 0, fy = 0, rods = 0;
@@ -551,6 +577,7 @@ static void draw_boss_body(void)
     OAM_item_t *rod = &shadow_OAM[SP_ROD];
     pal = boss.flash & 2 ? SPAL_WHITE : SPAL_BOT | S_PALETTE;   /* (DMG: OBP1) */
     if (boss_boom && (frame & 2)) pal = SPAL_DEAD;
+    else if (!boss.flash && (frame & 2) && boss_charging()) pal = SPAL_DEAD;
     if (boss.dead && !boss_boom) {
         for (k = 0; k < 16; k += 4) hide4((uint8_t)(SP_ENEMY + k));
     } else if (boss.kind == BK_TWIN) {
@@ -1309,8 +1336,12 @@ uint8_t play_run(void) BANKED
             pose = POSE_IDLE;
         }
         /* laser gates blink */
-        if (laser_on(stage_t) != laser_was) {
-            laser_was = laser_on(stage_t);
+        /* (shown lit 8 frames before they burn: the art takes a few VBlanks to reach the
+         * screen, and a gate must never kill before it is seen) */
+        in = (uint8_t)((uint8_t)(stage_t >> 3) & 15);
+        in = (uint8_t)(in < 9 || in == 15);
+        if (in != laser_was) {
+            laser_was = in;
             gfx_laser(laser_was);
         }
         dbg_ly[2] = LY_REG;

@@ -18,7 +18,7 @@ import random
 import subprocess
 import unittest
 from romlib import (Game, MSGEN, PS_CARD, PS_PLAY, PS_DEAD, PS_CLEAR, PS_PAUSE, RUN_STAGE, RUN_LIVES,
-                    RUN_DEATHS, VramWatch, asset_define, rom_data, vram_tiles)
+                    RUN_DEATHS, VramWatch, asset_define, metatile, rom_data, vram_tiles)
 
 SEED = 0x1234
 BK_PISTON = 2
@@ -417,6 +417,33 @@ class Feel(unittest.TestCase):
         self.assertTrue(g.wait(lambda: g.boss()['active'], 30000))
         self.assertTrue(g.wait(lambda: g.u8('ev_armour'), 600), 'no shot ever bounced off the piston')
         self.assertTrue(g.wait(lambda: 'ARMOUR SHUT' in g.hud_text(), 120), 'the HUD never said why')
+
+    @both
+    def test_laser_gates_show_before_they_burn(self, cgb):
+        """a gate's lit art is on the screen by the frame it turns deadly (its art is
+        copied in VBlank, a few frames after it is asked for), and gone while it is safe"""
+        g = Game(cgb)
+        g.run(150)
+        load_demo(g, bot_path('s', 3))
+        self.assertTrue(g.start_sector(3))
+        base = asset_define('TILE_ART_BASE')
+        art = rom_data('art_tiles', asset_define('NUM_ART_TILES') * 16)
+        slot = g.u8('r_mt_tiles', metatile('MT_DOOR_CLOSED') * 4)
+        dark = g.u8('r_mt_tiles', metatile('MT_DOOR_OPEN') * 4)
+        off = art[(dark - base) * 16:(dark - base) * 16 + 64]
+        lit = unlit = 0
+        while g.u8('play_state') == PS_PLAY:
+            g.run(1)
+            t = g.u16('stage_t')
+            shown = b''.join(vram_tiles(g, slot, 4))
+            if (t & 127) < 72 and t > 8:            # (laser_on: 72 frames of every 128)
+                self.assertNotEqual(shown, off, 'a laser gate burns unseen at stage time %d' % t)
+                lit += 1
+            elif 84 <= (t & 127) < 116:
+                self.assertEqual(shown, off, 'a laser gate looks lit while it is safe, at stage time %d' % t)
+                unlit += 1
+        self.assertGreater(lit, 500)
+        self.assertGreater(unlit, 200)
 
     @both
     def test_soft_reset(self, cgb):

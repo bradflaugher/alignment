@@ -138,6 +138,14 @@ def asset_define(name):
     return int(re.search(r'#define\s+%s\s+(\d+)' % name, text).group(1))
 
 
+def metatile(name):
+    """the index of a metatile (the order of the MT_ enum in assets.h)"""
+    with open(os.path.join(ROOT, 'src', 'gb', 'assets.h')) as f:
+        text = f.read()
+    names = re.findall(r'\bMT_[A-Z0-9_]+', text[text.index('MT_EMPTY'):text.index('NUM_MT')])
+    return names.index(name)
+
+
 def rom_symbol(name):
     """(bank, address) of a symbol, from the .sym file"""
     with open(SYM) as f:
